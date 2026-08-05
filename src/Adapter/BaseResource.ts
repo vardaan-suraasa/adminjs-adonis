@@ -24,7 +24,7 @@ import { components } from './Components'
 import { Property } from './Property'
 import { LucidRecord } from './Record'
 import { SEARCH_PROPERTY_PATH } from './decorators'
-import { getAdminColumnOptions } from './helpers'
+import { escapeLikePattern, getAdminColumnOptions } from './helpers'
 
 type WhereClause = (builder: ModelQueryBuilderContract<LucidModel>) => void
 
@@ -98,7 +98,11 @@ export class BaseResource extends BaseAdminResource {
 
     /**
      * Helper to get property for the given column, the reserved generic
-     * search path, or a registered virtual filter path
+     * search path, or a registered virtual filter path.
+     *
+     * Precedence: real column > reserved search path > virtual filter.
+     * `@adminFilter` rejects column paths and `SEARCH_PROPERTY_PATH`, so
+     * virtual filters never collide with the first two branches.
      */
     public property(path: string) {
         if (this.model.$columnsDefinitions.has(path)) {
@@ -139,17 +143,30 @@ export class BaseResource extends BaseAdminResource {
         for (const key of Object.keys(filter.filters)) {
             const filterElement = filter.filters[key]
 
-            if (key === SEARCH_PROPERTY_PATH) {
-                await this.applySearch(query, String(filterElement.value))
+            // Only treat the reserved path as generic search when it is not a
+            // real column (a column named `search` keeps column-filter behaviour).
+            if (
+                key === SEARCH_PROPERTY_PATH &&
+                !this.model.$columnsDefinitions.has(key)
+            ) {
+                await this.applySearch(query, String(filterElement.value ?? ''))
                 continue
             }
 
             const virtualFilter = this.model.$adminFilters?.[key]
 
             if (virtualFilter) {
-                const applyWhere = await virtualFilter.resolve(
-                    String(filterElement.value)
-                )
+                const value = filterElement.value
+
+                // Match applySearch: skip empty submissions so resolvers are
+                // not invoked for vacuous filter UI state.
+                if (value === '' || value === null || value === undefined) {
+                    continue
+                }
+
+                // Pass the raw AdminJS filter value through (string or
+                // `{ from, to }` range) — do not String() objects.
+                const applyWhere = await virtualFilter.resolve(value)
                 query.where(applyWhere)
                 continue
             }
@@ -165,15 +182,23 @@ export class BaseResource extends BaseAdminResource {
                 }
 
                 if (property.columnOptions.enum) {
-                    query.where(
-                        key,
-                        getEnumValue(
-                            property.columnOptions.enum,
-                            filterElement.value
+                    try {
+                        query.where(
+                            key,
+                            getEnumValue(
+                                property.columnOptions.enum,
+                                filterElement.value
+                            )
                         )
-                    )
+                    } catch {
+                        // Invalid / stale enum filter input — skip like malformed UUIDs
+                        continue
+                    }
                 } else if (property.isId() && property.type() === 'string') {
-                    query.whereLike(key, `%${filterElement.value}%`)
+                    query.whereLike(
+                        key,
+                        `%${escapeLikePattern(filterElement.value)}%`
+                    )
                 } else {
                     query.where(key, filterElement.value)
                 }
@@ -203,12 +228,14 @@ export class BaseResource extends BaseAdminResource {
             return
         }
 
-        const like = `%${value}%`
+        const like = `%${escapeLikePattern(value)}%`
         const wheres: WhereClause[] = []
 
         for (const column of this.model.$columnsDefinitions.keys()) {
             if (getAdminColumnOptions(this.model, column).searchable) {
-                wheres.push((builder) => builder.orWhereLike(column, like))
+                // OR composition happens on the outer group; each clause is a
+                // plain `whereLike` (not nested `orWhereLike`).
+                wheres.push((builder) => builder.whereLike(column, like))
             }
         }
 
@@ -395,10 +422,19 @@ export class BaseResource extends BaseAdminResource {
                     typeof params[property.path()] === 'string'
                 ) {
                     if (!params[property.path()]) {
-                        unchangedAttachments[property.path()] = null
-                    }
+                        // Cleared file input: only force null for optional
+                        // attachments. Required attachments stay in the schema
+                        // path so empty clear fails validation instead of
+                        // silently writing null.
+                        if (property.columnOptions.optional) {
+                            unchangedAttachments[property.path()] = null
 
-                    return acc
+                            return acc
+                        }
+                    } else {
+                        // Existing URL string — no new upload; skip file schema
+                        return acc
+                    }
                 }
 
                 acc[property.path()] = property.getSchemaType()

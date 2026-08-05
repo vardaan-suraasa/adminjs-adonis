@@ -313,6 +313,72 @@ test.group('Resource | applyFilter', (group) => {
 
         assert.isTrue(whereStub.calledOnceWith('type', UserType.ADMIN))
     })
+
+    test('skips filter when enum value is invalid instead of throwing', async ({
+        assert,
+        application,
+        models,
+    }) => {
+        const UserModel = models.User
+        const { column } = application.container.use('Adonis/Lucid/Orm')
+
+        enum UserType {
+            USER = 1,
+            ADMIN = 2,
+        }
+
+        class User extends UserModel {
+            @column()
+            public type: number
+        }
+
+        User.$adminColumnOptions = {
+            type: {
+                enum: UserType,
+            },
+        }
+
+        const resource = application.container.make(BaseResource, [User])
+        const query = models.User.query()
+        const filter = new Filter({ type: 'not-a-valid-enum-key' }, resource)
+
+        const whereStub = sinon.stub(query, 'where')
+
+        await resource.applyFilter(query, filter)
+
+        assert.isTrue(whereStub.notCalled)
+    })
+
+    test('applies column filter when model has a real column named search', async ({
+        assert,
+        application,
+        models,
+    }) => {
+        const UserModel = models.User
+        const { column } = application.container.use('Adonis/Lucid/Orm')
+
+        class User extends UserModel {
+            @column()
+            public search: string
+        }
+
+        User.$adminColumnOptions = {
+            username: { searchable: true },
+        }
+
+        const resource = application.container.make(BaseResource, [User])
+        const query = User.query()
+        const filter = new Filter({ search: 'literal-column-value' }, resource)
+
+        await resource.applyFilter(query, filter)
+
+        const { sql, bindings } = query.toSQL()
+
+        // Column path wins: exact match on `search`, not multi-column LIKE search
+        assert.include(sql, '`search` = ?')
+        assert.notInclude(sql, '`username` like ?')
+        assert.deepEqual(bindings, ['literal-column-value'])
+    })
 })
 
 test.group(
@@ -375,6 +441,74 @@ test.group(
             // never the raw filter value being applied against a `phoneNumber` column
             assert.isTrue(whereStub.calledOnce)
             assert.isFunction(whereStub.firstCall.args[0])
+        })
+
+        test('skips virtual filter when value is empty string', async ({
+            assert,
+            application,
+            models,
+        }) => {
+            const UserModel = models.User
+            const resolve = sinon.stub().resolves(() => {})
+
+            class User extends UserModel {
+                @adminFilter('phoneNumber')
+                public static async filterByPhoneNumber(value: string) {
+                    return resolve(value)
+                }
+            }
+
+            const resource = application.container.make(BaseResource, [User])
+            const query = User.query()
+            const filter = new Filter({ phoneNumber: '' }, resource)
+
+            await resource.applyFilter(query, filter)
+
+            assert.isTrue(resolve.notCalled)
+            assert.notInclude(query.toSQL().sql, 'where')
+        })
+
+        test('passes range object through to the virtual filter resolver', async ({
+            assert,
+            application,
+            models,
+        }) => {
+            const UserModel = models.User
+            let receivedValue: unknown
+
+            class User extends UserModel {
+                @adminFilter('createdRange', { type: 'datetime' })
+                public static async filterByRange(value: any) {
+                    receivedValue = value
+
+                    return (builder: any) =>
+                        builder.whereBetween('created_at', [
+                            value.from,
+                            value.to,
+                        ])
+                }
+            }
+
+            const resource = application.container.make(BaseResource, [User])
+            const query = User.query()
+            const filter = new Filter(
+                {
+                    'createdRange~~from': '2020-01-01',
+                    'createdRange~~to': '2020-12-31',
+                },
+                resource
+            )
+
+            await resource.applyFilter(query, filter)
+
+            // Must receive the range object, not a String()-coerced
+            // "[object Object]" (the previous bug).
+            assert.isObject(receivedValue)
+            assert.notStrictEqual(receivedValue, '[object Object]')
+            assert.deepEqual(receivedValue, {
+                from: '2020-01-01',
+                to: '2020-12-31',
+            })
         })
     }
 )
@@ -991,6 +1125,42 @@ test.group('Resource | validateParams', (group) => {
         const validatedData = await resource.validateParams(params)
 
         assert.isNull(validatedData.attachment)
+    })
+
+    test('throws when a required attachment is cleared with empty string', async ({
+        assert,
+        application,
+        models,
+    }) => {
+        const UserModel = models.User
+        const { column } = application.container.use('Adonis/Lucid/Orm')
+
+        class User extends UserModel {
+            @column()
+            public attachment: string
+        }
+
+        User.$adminColumnOptions = {
+            attachment: {
+                type: 'file',
+                optional: false,
+            },
+        }
+
+        const resource = application.container.make(BaseResource, [User])
+        const params = {
+            username: 'hello-world',
+            password: 'Hi!',
+            attachment: '',
+        }
+
+        try {
+            await resource.validateParams(params)
+
+            throw new Error(`resource.validateParams didn't throw exception!`)
+        } catch (e) {
+            assert.instanceOf(e, ValidationError)
+        }
     })
 })
 

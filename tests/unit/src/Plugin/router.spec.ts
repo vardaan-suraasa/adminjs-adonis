@@ -118,6 +118,55 @@ test.group('Router | createRouteHandler', (group) => {
         assert.strictEqual(receivedCurrentAdmin, ssoUser)
     })
 
+    test('uses the first guard when auth middleware lists multiple guards', async ({
+        assert,
+        application,
+    }) => {
+        const webUser = { uuid: 'web-user' }
+        const defaultUser = { uuid: 'default-user' }
+
+        ;(ctx as any).auth = {
+            user: defaultUser,
+            use: (guard: string) => {
+                assert.strictEqual(guard, 'web')
+
+                return { user: webUser }
+            },
+        }
+
+        const router = application.container.make(Router, [
+            admin,
+            {
+                enabled: true,
+                middlewares: ['auth:web,api'],
+            },
+        ])
+
+        let receivedCurrentAdmin: unknown
+
+        class ControllerWithCapture {
+            public admin: AdminJS
+
+            constructor(_ctorArgs: { admin: AdminJS }, currentAdmin: unknown) {
+                this.admin = _ctorArgs.admin
+                receivedCurrentAdmin = currentAdmin
+            }
+
+            public test() {
+                return 'Sample HTML Text'
+            }
+        }
+
+        const handler = router.createRouteHandler({
+            ...route,
+            Controller: ControllerWithCapture,
+        })
+
+        await handler(ctx)
+
+        assert.strictEqual(receivedCurrentAdmin, webUser)
+    })
+
     test('falls back to the default guard when no auth:<guard> middleware is configured', async ({
         assert,
         application,

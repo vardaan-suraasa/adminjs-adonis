@@ -1,3 +1,40 @@
+## Unreleased
+
+### Features
+
+* **Virtual filters** (`@adminFilter`) — register non-column filters via a static resolver that returns a synchronous query-builder callback
+* **Generic multi-column search** — `@adminColumn({ searchable: true })` + reserved path `SEARCH_PROPERTY_PATH` (`'search'`); virtual filters can join via `includeInSearch: true`
+* **Custom actions** (`@adminAction`) — wire resource/record/bulk actions on the model into `options.actions`
+* **`$adminResourceOptions`** — model-level escape hatch for `filterProperties` / `properties` / etc. without opting out of automatic discovery
+
+### Fixes
+
+* Enum filter values are converted via `getEnumValue` before query application; invalid enum filter input is skipped (no 500)
+* Attachment fields: existing URL strings and cleared optional attachments are handled in `validateParams`; clearing a **required** attachment fails validation instead of writing `null`
+* `belongsTo` reference resolved only when exactly one relation matches the FK
+* Current admin user resolved from the configured `auth:<guard>` middleware (first guard when `auth:web,api`)
+* `applyFilter` is `async` and mutates the query in place (never returns the thenable Lucid builder)
+
+### Breaking
+
+* **`applyFilter` signature:** was synchronous and returned the query builder; now `async` and returns `Promise<void>`, mutating `query` in place.
+
+  ```ts
+  // before
+  const query = resource.applyFilter(model.query(), filter)
+  // after
+  const query = model.query()
+  await resource.applyFilter(query, filter)
+  ```
+
+  Prefer a **major** version bump when publishing this release if you follow semver strictly.
+
+### Notes
+
+* `@adminFilter` rejects paths that collide with a real column or with `SEARCH_PROPERTY_PATH`
+* `@adminAction` rejects built-in action names unless `{ override: true }`
+* A real column named `search` takes precedence over the generic search box
+
 ## 1.2.0 (2023-02-21)
 
 * refact: add type as string for enum ([e649573](https://github.com/chirgjin/adminjs-adonis/commit/e649573))

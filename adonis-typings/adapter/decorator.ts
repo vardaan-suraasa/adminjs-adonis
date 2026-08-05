@@ -165,6 +165,10 @@ declare module '@ioc:Adonis/Addons/AdminJS' {
      * Any column decorated with `@adminColumn({ searchable: true })`, and any
      * `@adminFilter` marked `includeInSearch: true`, is OR'd together when this
      * path is submitted as a filter.
+     *
+     * Must not collide with a real column named `search` — if such a column
+     * exists, column filtering wins and multi-column search is unavailable for
+     * that resource. `@adminFilter('search', ...)` is rejected at registration.
      */
     export const SEARCH_PROPERTY_PATH: 'search'
 
@@ -173,7 +177,9 @@ declare module '@ioc:Adonis/Addons/AdminJS' {
      */
     export type AdminFilterOptions = {
         /**
-         * Type of value this filter accepts. Defaults to 'string'
+         * Type of value this filter accepts. Defaults to 'string'.
+         * For `date` / `datetime`, AdminJS may submit a range object
+         * `{ from?, to? }` — see {@link AdminFilterValue}.
          */
         type?: PropertyType
         /**
@@ -182,6 +188,13 @@ declare module '@ioc:Adonis/Addons/AdminJS' {
          */
         includeInSearch?: boolean
     }
+
+    /**
+     * Value passed to a {@link FilterResolver}. Scalar filters receive a string;
+     * date/datetime (and other range) filters receive AdminJS's `{ from, to }`
+     * object. Empty string / nullish values are not forwarded (the filter is skipped).
+     */
+    export type AdminFilterValue = string | { from?: string; to?: string }
 
     /**
      * A resolver for a virtual filter. Receives the raw filter value and must
@@ -193,7 +206,7 @@ declare module '@ioc:Adonis/Addons/AdminJS' {
      * generic search), so it must not assume it's the only condition applied.
      */
     export type FilterResolver = (
-        value: string
+        value: AdminFilterValue
     ) => Promise<(builder: ModelQueryBuilderContract<LucidModel>) => void>
 
     /**
@@ -265,6 +278,12 @@ declare module '@ioc:Adonis/Addons/AdminJS' {
          * Defaults to false
          */
         showInDrawer?: boolean
+        /**
+         * Set to `true` to intentionally replace a built-in AdminJS action
+         * (`new`, `edit`, `delete`, `list`, `show`, `bulkDelete`, `search`).
+         * Without this flag, `@adminAction` with a built-in name throws.
+         */
+        override?: boolean
         /**
          * Any other AdminJS `Action` option (eg. `variant`, `containerWidth`,
          * `layout`, `before`, `after`) - passed through as-is

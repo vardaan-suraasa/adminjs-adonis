@@ -2,6 +2,18 @@ import type { AdminColumnOptions } from '@ioc:Adonis/Addons/AdminJS'
 import type { LucidModel } from '@ioc:Adonis/Lucid/Orm'
 
 /**
+ * Escape LIKE metacharacters so user input is matched literally inside
+ * `%...%` patterns. Escapes `\`, `%`, and `_`.
+ *
+ * Dialects differ on whether `\` is the default ESCAPE character; this is
+ * best-effort for predictable admin search UX rather than a portable SQL
+ * guarantee.
+ */
+export function escapeLikePattern(value: string): string {
+    return value.replace(/[\\%_]/g, '\\$&')
+}
+
+/**
  * Helper function to get admin column options for given model & column.
  *
  * Adds default values to the options not provided by the user

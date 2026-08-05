@@ -38,7 +38,9 @@ export class Router {
                 middleware === 'auth' || middleware.startsWith('auth:')
         )
 
-        const guard = authMiddleware?.split(':')[1]
+        // `auth:web,api` names multiple guards; use the first one. Only the
+        // first `auth` / `auth:*` middleware entry is considered.
+        const guard = authMiddleware?.split(':')[1]?.split(',')[0]?.trim()
 
         return guard ? auth.use(guard).user : auth.user
     }

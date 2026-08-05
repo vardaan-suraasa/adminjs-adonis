@@ -178,10 +178,11 @@ box) rely on to surface a non-column field in the UI.
 
 ### Filtering
 
-By default, filtering works out of the box for every `@column` - text columns
-get an exact-match filter, except columns marked `unique: true` (eg. via
-`@adminColumn({ unique: true })`, or your primary key) which get a partial
-(`LIKE`) match instead.
+By default, filtering works out of the box for every `@column` - most columns
+get an exact-match filter. **String identifier** fields (`property.isId()` with
+type `string`, e.g. a UUID primary key or a string unique column treated as an
+id) get a partial (`LIKE`) match instead. Numeric primary keys (the common case)
+still use exact match. Date/datetime filters use a range (`from` / `to`).
 
 #### Virtual & cross-table filters (`@adminFilter`)
 
@@ -271,7 +272,13 @@ result baked in, which the adapter then applies to the query.
 
 Mark one or more columns `searchable: true` via `@adminColumn` to have them
 participate in a generic, OR-combined search filter, available under the
-reserved path `'search'` (exported as `SEARCH_PROPERTY_PATH`):
+reserved path `'search'` (exported as `SEARCH_PROPERTY_PATH`).
+
+> **Reservation:** do not name a model column `search` if you need this box —
+> a real `search` column takes precedence and disables multi-column search for
+> that resource. `@adminFilter('search', ...)` is rejected at registration.
+> Search and column `LIKE` filters escape `%` / `_` in user input so they are
+> matched literally (best-effort across SQL dialects).
 
 ```ts
 // User.ts
@@ -323,6 +330,10 @@ bulk - see [AdminJS's Actions docs](https://docs.adminjs.co/basics/action))
 directly on the model, Django-admin style. The decorated static method becomes
 the action's `handler` and is wired into that resource automatically - no
 changes needed in `config/adminjs.ts`.
+
+Built-in action names (`new`, `edit`, `delete`, `list`, `show`, `bulkDelete`,
+`search`) are protected: registering one throws unless you pass
+`{ override: true }`.
 
 ```ts
 // User.ts

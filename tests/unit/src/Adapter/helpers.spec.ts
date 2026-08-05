@@ -1,4 +1,7 @@
-import { getAdminColumnOptions } from '../../../../src/Adapter/helpers'
+import {
+    escapeLikePattern,
+    getAdminColumnOptions,
+} from '../../../../src/Adapter/helpers'
 import { test } from '@japa/runner'
 
 test.group('helpers | getAdminColumnOptions', () => {
@@ -32,5 +35,12 @@ test.group('helpers | getAdminColumnOptions', () => {
             optional: false,
             serialize: undefined,
         })
+    })
+})
+
+test.group('helpers | escapeLikePattern', () => {
+    test('escapes backslash, percent and underscore', ({ assert }) => {
+        assert.strictEqual(escapeLikePattern('a%b_c\\d'), 'a\\%b\\_c\\\\d')
+        assert.strictEqual(escapeLikePattern('plain'), 'plain')
     })
 })

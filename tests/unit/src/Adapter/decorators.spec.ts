@@ -2,6 +2,7 @@ import {
     adminAction,
     adminColumn,
     adminFilter,
+    SEARCH_PROPERTY_PATH,
 } from '../../../../src/Adapter/decorators'
 import { test } from '@japa/runner'
 
@@ -127,6 +128,65 @@ test.group('decorator | adminFilter', () => {
         assert.isObject(User.$adminFilters!.phoneNumber)
         assert.isObject(User.$adminFilters!.email)
     })
+
+    test('throws when path is the reserved SEARCH_PROPERTY_PATH', ({
+        assert,
+        models,
+    }) => {
+        const UserModel = models.User
+
+        assert.throws(() => {
+            class User extends UserModel {
+                @adminFilter(SEARCH_PROPERTY_PATH)
+                public static async filterBySearch(_value: string) {
+                    return () => {}
+                }
+            }
+
+            return User
+        }, /reserved/)
+    })
+
+    test('throws when path collides with an existing column', ({
+        assert,
+        models,
+    }) => {
+        const UserModel = models.User
+
+        assert.throws(() => {
+            class User extends UserModel {
+                @adminFilter('username')
+                public static async filterByUsername(_value: string) {
+                    return () => {}
+                }
+            }
+
+            return User
+        }, /collides with an existing column/)
+    })
+
+    test('throws when the same path is registered twice on one model', ({
+        assert,
+        models,
+    }) => {
+        const UserModel = models.User
+
+        assert.throws(() => {
+            class User extends UserModel {
+                @adminFilter('phoneNumber')
+                public static async filterByPhoneNumber(_value: string) {
+                    return () => {}
+                }
+
+                @adminFilter('phoneNumber')
+                public static async filterByPhoneNumberAgain(_value: string) {
+                    return () => {}
+                }
+            }
+
+            return User
+        }, /already registered/)
+    })
 })
 
 test.group('decorator | adminAction', () => {
@@ -205,5 +265,63 @@ test.group('decorator | adminAction', () => {
 
         assert.isObject(User.$adminActions!.deactivate)
         assert.isObject(User.$adminActions!.exportAll)
+    })
+
+    test('throws when registering a built-in action name without override', ({
+        assert,
+        models,
+    }) => {
+        const UserModel = models.User
+
+        assert.throws(() => {
+            class User extends UserModel {
+                @adminAction('delete', { actionType: 'record' })
+                public static async deleteAction() {
+                    return {}
+                }
+            }
+
+            return User
+        }, /built-in AdminJS action/)
+    })
+
+    test('allows built-in action name when override is true', ({
+        assert,
+        models,
+    }) => {
+        const UserModel = models.User
+
+        class User extends UserModel {
+            @adminAction('delete', { actionType: 'record', override: true })
+            public static async deleteAction() {
+                return {}
+            }
+        }
+
+        assert.isObject(User.$adminActions!.delete)
+        assert.isTrue(User.$adminActions!.delete.override)
+    })
+
+    test('throws when the same action name is registered twice on one model', ({
+        assert,
+        models,
+    }) => {
+        const UserModel = models.User
+
+        assert.throws(() => {
+            class User extends UserModel {
+                @adminAction('deactivate', { actionType: 'record' })
+                public static async deactivate() {
+                    return {}
+                }
+
+                @adminAction('deactivate', { actionType: 'record' })
+                public static async deactivateAgain() {
+                    return {}
+                }
+            }
+
+            return User
+        }, /already registered/)
     })
 })

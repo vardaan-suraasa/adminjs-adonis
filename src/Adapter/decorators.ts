@@ -11,6 +11,27 @@ import type {
 } from '@ioc:Adonis/Lucid/Orm'
 
 /**
+ * AdminJS built-in action names. Registering `@adminAction` with one of these
+ * requires `{ override: true }` so misnamed custom actions do not silently
+ * replace core behaviour.
+ */
+export const BUILTIN_ADMIN_ACTIONS = new Set([
+    'new',
+    'edit',
+    'delete',
+    'list',
+    'show',
+    'bulkDelete',
+    'search',
+])
+
+/** Paths already registered via `@adminFilter` on a given model class. */
+const registeredFilterPaths = new WeakMap<object, Set<string>>()
+
+/** Action names already registered via `@adminAction` on a given model class. */
+const registeredActionNames = new WeakMap<object, Set<string>>()
+
+/**
  * Define type, optional etc properties for AdminJS
  */
 export function adminColumn(options: Partial<AdminColumnOptions>) {
@@ -25,6 +46,10 @@ export function adminColumn(options: Partial<AdminColumnOptions>) {
 
 /**
  * Reserved filter path for the generic, multi-column search box.
+ *
+ * Do not name a column or `@adminFilter` path `search` if you need the
+ * generic search box — a real column named `search` takes precedence and
+ * disables multi-column search for that resource.
  */
 export const SEARCH_PROPERTY_PATH = 'search'
 
@@ -37,6 +62,29 @@ export const adminFilter: FilterDecorator = (path, options = {}) =>
         target.boot()
 
         const model = target as unknown as LucidModel
+
+        if (path === SEARCH_PROPERTY_PATH) {
+            throw new Error(
+                `@adminFilter path "${path}" is reserved for the generic multi-column search box (SEARCH_PROPERTY_PATH) on ${model.name}`
+            )
+        }
+
+        if (model.$columnsDefinitions.has(path)) {
+            throw new Error(
+                `@adminFilter path "${path}" collides with an existing column on ${model.name}. Use a non-column path for virtual filters.`
+            )
+        }
+
+        const paths = registeredFilterPaths.get(target) || new Set<string>()
+
+        if (paths.has(path)) {
+            throw new Error(
+                `@adminFilter path "${path}" is already registered on ${model.name}`
+            )
+        }
+
+        paths.add(path)
+        registeredFilterPaths.set(target, paths)
 
         model.$defineProperty('$adminFilters', {}, 'inherit')
         model.$adminFilters![path] = {
@@ -55,6 +103,23 @@ export const adminAction: ActionDecorator = (name, options) =>
         target.boot()
 
         const model = target as unknown as LucidModel
+
+        if (BUILTIN_ADMIN_ACTIONS.has(name) && !options.override) {
+            throw new Error(
+                `@adminAction("${name}") would replace a built-in AdminJS action on ${model.name}. Pass { override: true } if that is intentional.`
+            )
+        }
+
+        const names = registeredActionNames.get(target) || new Set<string>()
+
+        if (names.has(name)) {
+            throw new Error(
+                `@adminAction name "${name}" is already registered on ${model.name}`
+            )
+        }
+
+        names.add(name)
+        registeredActionNames.set(target, names)
 
         model.$defineProperty('$adminActions', {}, 'inherit')
         model.$adminActions![name] = {
