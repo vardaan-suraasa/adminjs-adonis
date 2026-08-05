@@ -14,6 +14,36 @@ export class Router {
     ) {}
 
     /**
+     * Helper to find the currently authenticated admin user.
+     *
+     * `ctx.auth.user` always resolves against the app's *default* auth
+     * guard, which may not be the guard that actually authenticated this
+     * request. If the admin panel is protected via an `auth:<guard>`
+     * middleware (Adonis's convention for naming a specific, non-default
+     * guard), we use that guard explicitly instead of silently falling
+     * back to `undefined`.
+     */
+    private getCurrentAdmin(ctx: HttpContextContract) {
+        const auth = (ctx as any).auth
+
+        if (!auth) {
+            return undefined
+        }
+
+        const authMiddleware = (
+            (this.config.enabled && this.config.middlewares) ||
+            []
+        ).find(
+            (middleware) =>
+                middleware === 'auth' || middleware.startsWith('auth:')
+        )
+
+        const guard = authMiddleware?.split(':')[1]
+
+        return guard ? auth.use(guard).user : auth.user
+    }
+
+    /**
      * Helper function to create handler for a given adminjs route
      */
     public createRouteHandler(route: RouterType['routes'][number]) {
@@ -22,7 +52,7 @@ export class Router {
                 {
                     admin: this.admin,
                 },
-                (ctx as any).auth?.user // if auth plugin is installed then get user from it
+                this.getCurrentAdmin(ctx)
             )
 
             const html = await controller[route.action](

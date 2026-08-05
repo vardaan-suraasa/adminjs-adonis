@@ -120,6 +120,27 @@ test.group('Property | reference', () => {
 
         assert.strictEqual(property.reference(), null)
     })
+
+    test('returns null when multiple belongsTo relations share the same foreign key', ({
+        assert,
+        models,
+        application,
+    }) => {
+        const { belongsTo } = application.container.use('Adonis/Lucid/Orm')
+        const TodoListModel = models.TodoList
+
+        class TodoList extends TodoListModel {
+            @belongsTo(() => models.User, { foreignKey: 'userId' })
+            public secondaryUser: any
+        }
+
+        const property = application.container.make(Property, [
+            TodoList,
+            'userId',
+        ])
+
+        assert.isNull(property.reference())
+    })
 })
 
 test.group('Property | getSchemaType', (group) => {
@@ -331,5 +352,75 @@ test.group('Property | getSchemaType', (group) => {
             assert.isFunction(schemaType.getTree)
             assert.deepEqual(schemaType.getTree(), schema.string().getTree())
         })
+    })
+})
+
+test.group('Property | serialize', () => {
+    test('returns value as-is when attachment value is already a url string', async ({
+        assert,
+        application,
+        models,
+    }) => {
+        const UserModel = models.User
+        const { column } = application.container.use('Adonis/Lucid/Orm')
+
+        class User extends UserModel {
+            @column()
+            public attachment: string
+        }
+
+        User.$adminColumnOptions = {
+            attachment: {
+                type: 'file',
+            },
+        }
+
+        const property = application.container.make(Property, [
+            User,
+            'attachment',
+        ])
+
+        const row = new User().fill({
+            attachment: 'https://example.com/existing-file.pdf',
+        })
+
+        assert.strictEqual(
+            await property.serialize(row),
+            'https://example.com/existing-file.pdf'
+        )
+    })
+
+    test('extracts url when attachment value is an object', async ({
+        assert,
+        application,
+        models,
+    }) => {
+        const UserModel = models.User
+        const { column } = application.container.use('Adonis/Lucid/Orm')
+
+        class User extends UserModel {
+            @column()
+            public attachment: any
+        }
+
+        User.$adminColumnOptions = {
+            attachment: {
+                type: 'file',
+            },
+        }
+
+        const property = application.container.make(Property, [
+            User,
+            'attachment',
+        ])
+
+        const row = new User().fill({
+            attachment: { url: 'https://example.com/existing-file.pdf' },
+        })
+
+        assert.strictEqual(
+            await property.serialize(row),
+            'https://example.com/existing-file.pdf'
+        )
     })
 })

@@ -166,6 +166,8 @@ export class Property extends BaseProperty {
      * Helper to compute reference relation for this property.
      */
     private getReference() {
+        const matches: BelongsToRelationContract<LucidModel, LucidModel>[] = []
+
         for (const relation of this.model.$relationsDefinitions.values()) {
             if (!relation.booted) {
                 relation.boot()
@@ -175,13 +177,23 @@ export class Property extends BaseProperty {
                 relation.type === 'belongsTo' &&
                 relation.foreignKey === this.columnKey
             ) {
-                this.relation = relation
-
-                return relation.relatedModel().table
+                matches.push(relation)
             }
         }
 
-        return null
+        // If more than one belongsTo relation shares this foreign key (eg. a
+        // polymorphic column resolved to a different table per row depending on
+        // some discriminator), we can't know which one applies to any given row.
+        // AdminJS can only resolve a reference to a single resource for the whole
+        // property, so guessing (eg. always picking the first) would silently
+        // point at the wrong table for every row that isn't that first type.
+        if (matches.length !== 1) {
+            return null
+        }
+
+        this.relation = matches[0]
+
+        return this.relation.relatedModel().table
     }
 
     /**
@@ -293,7 +305,7 @@ export class Property extends BaseProperty {
         }
 
         if (this.isAttachment) {
-            return value.url
+            return typeof value === 'string' ? value : value.url
         }
 
         return value

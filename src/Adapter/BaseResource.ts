@@ -1,6 +1,7 @@
 import { getEnumValue } from '../helpers'
 import { inject } from '@adonisjs/core/build/standalone'
 import {
+    BaseProperty,
     BaseResource as BaseAdminResource,
     ErrorTypeEnum,
     Filter,
@@ -22,6 +23,10 @@ import type {
 import { components } from './Components'
 import { Property } from './Property'
 import { LucidRecord } from './Record'
+import { SEARCH_PROPERTY_PATH } from './decorators'
+import { getAdminColumnOptions } from './helpers'
+
+type WhereClause = (builder: ModelQueryBuilderContract<LucidModel>) => void
 
 /**
  * Resource adapter for AdminJS
@@ -84,43 +89,90 @@ export class BaseResource extends BaseAdminResource {
         const properties: Property[] = []
 
         for (const column of this.model.$columnsDefinitions.keys()) {
-            properties.push(this.property(column)!)
+            // property() always returns a real Property for column paths
+            properties.push(this.property(column) as Property)
         }
 
         return properties
     }
 
     /**
-     * Helper to get property for the given column
+     * Helper to get property for the given column, the reserved generic
+     * search path, or a registered virtual filter path
      */
     public property(path: string) {
-        if (!this.model.$columnsDefinitions.has(path)) {
-            return null
+        if (this.model.$columnsDefinitions.has(path)) {
+            return new Property(this.model, path, this.validator)
         }
 
-        return new Property(this.model, path, this.validator)
+        if (path === SEARCH_PROPERTY_PATH) {
+            return new BaseProperty({ path, type: 'string', isSortable: false })
+        }
+
+        const filterOptions = this.model.$adminFilters?.[path]
+
+        if (filterOptions) {
+            return new BaseProperty({
+                path,
+                type: filterOptions.type || 'string',
+                isSortable: false,
+            })
+        }
+
+        return null
     }
 
     /**
-     * Helper to apply filters on a given query
+     * Helper to apply filters (including the reserved search path & any
+     * registered virtual filters) on a given query.
+     *
+     * Mutates `query` in place and doesn't return it: Lucid query builders are
+     * themselves thenable (awaiting one executes the query), so this being an
+     * `async` function must never `return query` - doing so would make the
+     * promise-resolution algorithm call `query.then()` to unwrap it, executing
+     * the query before callers get to add `.limit()`/`.offset()`/`.orderBy()`.
      */
-    public applyFilter(
+    public async applyFilter(
         query: ModelQueryBuilderContract<LucidModel>,
         filter: Filter
-    ) {
-        Object.keys(filter.filters).forEach((key) => {
+    ): Promise<void> {
+        for (const key of Object.keys(filter.filters)) {
             const filterElement = filter.filters[key]
-            const property = filterElement.property
+
+            if (key === SEARCH_PROPERTY_PATH) {
+                await this.applySearch(query, String(filterElement.value))
+                continue
+            }
+
+            const virtualFilter = this.model.$adminFilters?.[key]
+
+            if (virtualFilter) {
+                const applyWhere = await virtualFilter.resolve(
+                    String(filterElement.value)
+                )
+                query.where(applyWhere)
+                continue
+            }
+
+            const property = filterElement.property as Property
 
             if (typeof filterElement.value === 'string') {
                 if (
                     property.type() === 'uuid' &&
                     !Validator.isUUID(filterElement.value)
                 ) {
-                    return
+                    continue
                 }
 
-                if (property.isId() && property.type() === 'string') {
+                if (property.columnOptions.enum) {
+                    query.where(
+                        key,
+                        getEnumValue(
+                            property.columnOptions.enum,
+                            filterElement.value
+                        )
+                    )
+                } else if (property.isId() && property.type() === 'string') {
                     query.whereLike(key, `%${filterElement.value}%`)
                 } else {
                     query.where(key, filterElement.value)
@@ -131,16 +183,65 @@ export class BaseResource extends BaseAdminResource {
                     filterElement.value.to,
                 ])
             }
-        })
+        }
+    }
 
-        return query
+    /**
+     * Helper to apply the generic multi-column search (see
+     * {@link SEARCH_PROPERTY_PATH}) on a given query.
+     *
+     * OR-combines a `whereLike` for every column marked `searchable: true`
+     * with every registered virtual filter marked `includeInSearch: true`.
+     * Each virtual filter's async work is resolved up front so the final
+     * combination only needs a synchronous query builder callback.
+     */
+    private async applySearch(
+        query: ModelQueryBuilderContract<LucidModel>,
+        value: string
+    ) {
+        if (!value) {
+            return
+        }
+
+        const like = `%${value}%`
+        const wheres: WhereClause[] = []
+
+        for (const column of this.model.$columnsDefinitions.keys()) {
+            if (getAdminColumnOptions(this.model, column).searchable) {
+                wheres.push((builder) => builder.orWhereLike(column, like))
+            }
+        }
+
+        for (const filterOptions of Object.values(
+            this.model.$adminFilters || {}
+        )) {
+            if (filterOptions.includeInSearch) {
+                wheres.push(await filterOptions.resolve(value))
+            }
+        }
+
+        if (!wheres.length) {
+            return
+        }
+
+        query.where((builder) => {
+            wheres.forEach((applyWhere, index) => {
+                if (index === 0) {
+                    builder.where(applyWhere)
+                } else {
+                    builder.orWhere(applyWhere)
+                }
+            })
+        })
     }
 
     /**
      * Returns number of objects matching the given filter
      */
     public async count(filter: Filter) {
-        const query = this.applyFilter(this.model.query(), filter)
+        const query = this.model.query()
+
+        await this.applyFilter(query, filter)
 
         const obj = await query.count('*', 'count').firstOrFail()
 
@@ -163,7 +264,9 @@ export class BaseResource extends BaseAdminResource {
                 | undefined
         }
     ): Promise<LucidRecord[]> {
-        const query = this.applyFilter(this.model.query(), filter)
+        const query = this.model.query()
+
+        await this.applyFilter(query, filter)
 
         if (options.limit !== undefined) {
             query.limit(options.limit)
@@ -248,7 +351,15 @@ export class BaseResource extends BaseAdminResource {
                 continue
             }
 
-            data[property.path()] = await property.serialize(row)
+            try {
+                data[property.path()] = await property.serialize(row)
+            } catch (error) {
+                error.message = `Failed to serialize property "${property.path()}" on resource "${this.id()}": ${
+                    error.message
+                }`
+
+                throw error
+            }
         }
 
         return data
@@ -264,18 +375,34 @@ export class BaseResource extends BaseAdminResource {
     /**
      * Helper to validate params passed during creation / updation.
      *
-     * TODO: add support for files
      * TODO: add support for JSON
      */
     public async validateParams(params: ParamsType) {
         const propertyHash: Record<string, Property> = {}
+        // A string value for an attachment property means no new file was
+        // uploaded (it's either the existing url or an empty string when the
+        // input was cleared) so it shouldn't go through file validation.
+        const unchangedAttachments: Record<string, null> = {}
 
         const validatorSchema = this.validator.schema.create(
             this.properties().reduce((acc, property) => {
-                if (property.isEditable()) {
-                    acc[property.path()] = property.getSchemaType()
-                    propertyHash[property.path()] = property
+                if (!property.isEditable()) {
+                    return acc
                 }
+
+                if (
+                    property.isAttachment &&
+                    typeof params[property.path()] === 'string'
+                ) {
+                    if (!params[property.path()]) {
+                        unchangedAttachments[property.path()] = null
+                    }
+
+                    return acc
+                }
+
+                acc[property.path()] = property.getSchemaType()
+                propertyHash[property.path()] = property
 
                 return acc
             }, {} as TypedSchema)
@@ -297,7 +424,7 @@ export class BaseResource extends BaseAdminResource {
                 }
             })
 
-            return data
+            return { ...data, ...unchangedAttachments }
         } catch (error) {
             if (error instanceof this.validator.ValidationException) {
                 // build AdminJS validation error from Adonis' ValidationException

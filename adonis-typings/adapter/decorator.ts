@@ -41,6 +41,11 @@ declare module '@ioc:Adonis/Addons/AdminJS' {
          */
         sortable: boolean
         /**
+         * Whether field participates in the generic multi-column search
+         * (see {@link SEARCH_PROPERTY_PATH}). Defaults to false
+         */
+        searchable: boolean
+        /**
          * Whether field is optional or not. Defaults to false
          */
         optional: boolean
@@ -154,4 +159,214 @@ declare module '@ioc:Adonis/Addons/AdminJS' {
      * Runs after the original 'beforeCreate' hook of AdonisJS
      */
     export const afterFetch: HookDecorator<LucidRow[]>
+
+    /**
+     * Reserved filter path for the generic, multi-column search box.
+     * Any column decorated with `@adminColumn({ searchable: true })`, and any
+     * `@adminFilter` marked `includeInSearch: true`, is OR'd together when this
+     * path is submitted as a filter.
+     */
+    export const SEARCH_PROPERTY_PATH: 'search'
+
+    /**
+     * Options for a virtual (non-column) filter registered via {@link adminFilter}
+     */
+    export type AdminFilterOptions = {
+        /**
+         * Type of value this filter accepts. Defaults to 'string'
+         */
+        type?: PropertyType
+        /**
+         * Whether this filter should also be OR'd into the generic multi-column
+         * search box registered at {@link SEARCH_PROPERTY_PATH}. Defaults to false
+         */
+        includeInSearch?: boolean
+    }
+
+    /**
+     * A resolver for a virtual filter. Receives the raw filter value and must
+     * resolve any async work (eg. querying other tables) up front, returning a
+     * synchronous callback that mutates the query builder it's given.
+     *
+     * The callback is invoked either directly (when the filter is used on its
+     * own) or nested inside an `orWhere` group (when it's included in the
+     * generic search), so it must not assume it's the only condition applied.
+     */
+    export type FilterResolver = (
+        value: string
+    ) => Promise<(builder: ModelQueryBuilderContract<LucidModel>) => void>
+
+    /**
+     * Type for the decorator providing virtual filter functionality
+     */
+    export type FilterDecorator = (
+        path: string,
+        options?: AdminFilterOptions
+    ) => <
+        Property extends string,
+        T extends LucidModel & Record<Property, FilterResolver>
+    >(
+        target: T,
+        property: Property
+    ) => void
+
+    /**
+     * Registers a static method as a virtual (non-column) filter for this model,
+     * available under the given path in the AdminJS filter drawer.
+     *
+     * Runs when a filter/search request includes a value for `path`.
+     */
+    export const adminFilter: FilterDecorator
+
+    /**
+     * Options for a custom admin action registered via {@link adminAction}.
+     *
+     * Hand-written rather than imported from AdminJS's own `Action` interface,
+     * so that a consuming app doesn't need the exact same `adminjs` version
+     * installed as this package's own dependency to satisfy the type checker -
+     * AdminProvider merges this into AdminJS's real `Action` type internally,
+     * where version differences don't cross a package boundary. Mirrors the
+     * commonly used subset of AdminJS's options; see
+     * https://docs.adminjs.co/basics/action for the full list AdminJS itself
+     * supports (anything not listed here can still be passed through - see
+     * the index signature below).
+     */
+    export type ActionDecoratorOptions = {
+        /**
+         * Type of action - 'resource' (whole resource), 'record' (single row),
+         * or 'bulk' (multiple selected rows)
+         */
+        actionType: 'resource' | 'record' | 'bulk'
+        /**
+         * Icon name for the action button
+         */
+        icon?: string
+        /**
+         * Guard message - user has to confirm this before the action runs
+         */
+        guard?: string
+        /**
+         * Component used to render the action. `false` means no dedicated
+         * view - the action runs immediately when clicked
+         */
+        component?: string | false
+        /**
+         * Whether the action is visible - boolean, or a function receiving
+         * the AdminJS action context
+         */
+        isVisible?: boolean | ((context: any) => boolean)
+        /**
+         * Whether the action can be invoked - boolean, or a function
+         * receiving the AdminJS action context
+         */
+        isAccessible?: boolean | ((context: any) => boolean)
+        /**
+         * Whether the action should open in a drawer instead of a full page.
+         * Defaults to false
+         */
+        showInDrawer?: boolean
+        /**
+         * Any other AdminJS `Action` option (eg. `variant`, `containerWidth`,
+         * `layout`, `before`, `after`) - passed through as-is
+         */
+        [key: string]: any
+    }
+
+    /**
+     * Handler signature for a custom admin action - matches AdminJS's own
+     * `ActionHandler` shape structurally, without importing it.
+     */
+    export type ActionDecoratorHandler = (
+        request: any,
+        response: any,
+        context: any
+    ) => Promise<any>
+
+    /**
+     * Type for the decorator providing custom admin action functionality
+     */
+    export type ActionDecorator = (
+        name: string,
+        options: ActionDecoratorOptions
+    ) => <
+        Property extends string,
+        T extends LucidModel & Record<Property, ActionDecoratorHandler>
+    >(
+        target: T,
+        property: Property
+    ) => void
+
+    /**
+     * Registers a static method as a custom AdminJS action (resource, record or
+     * bulk) for this model. The decorated method becomes the action's handler
+     * and is automatically wired into the resource's `options.actions` - no
+     * manual config-file changes needed.
+     */
+    export const adminAction: ActionDecorator
+
+    /**
+     * A minimal, adminjs-version-independent subset of AdminJS's own
+     * `ResourceOptions`, for the fields {@link AdminProvider} merges in
+     * automatically via a model's static `$adminResourceOptions`.
+     *
+     * Hand-written rather than imported from `adminjs` for the same reason as
+     * {@link ActionDecoratorOptions} above - see
+     * https://docs.adminjs.co/basics/resource#resourceoptions for the full
+     * list of options AdminJS itself supports (anything not listed here can
+     * still be passed through - see the index signature below).
+     */
+    export type AdminResourceOptions = {
+        /**
+         * Paths (real columns, or virtual `@adminFilter`/search paths) which
+         * should be visible in the filter drawer. Prefer scoping a virtual
+         * path via its own `properties.<path>.isVisible.filter` (see below)
+         * over setting this - a non-empty `filterProperties` replaces every
+         * column's default filter visibility, not just adds to it.
+         */
+        filterProperties?: string[]
+        /**
+         * Paths which should be visible on the list view
+         */
+        listProperties?: string[]
+        /**
+         * Paths which should be visible on the edit view
+         */
+        editProperties?: string[]
+        /**
+         * Paths which should be visible on the show view
+         */
+        showProperties?: string[]
+        /**
+         * Per-property configuration, keyed by path. An entry (even an empty
+         * one) is required for any virtual `@adminFilter`/search path to
+         * appear in the UI at all - see the "Filtering" section of the README
+         */
+        properties?: Record<
+            string,
+            {
+                isVisible?:
+                    | boolean
+                    | {
+                          list?: boolean
+                          show?: boolean
+                          edit?: boolean
+                          filter?: boolean
+                      }
+                [key: string]: any
+            }
+        >
+        /**
+         * Custom actions - usually populated automatically from
+         * `@adminAction`, but can be extended here too
+         */
+        actions?: Record<
+            string,
+            ActionDecoratorOptions & { handler?: ActionDecoratorHandler }
+        >
+        /**
+         * Any other AdminJS `ResourceOptions` field (eg. `navigation`, `sort`,
+         * `id`) - passed through as-is
+         */
+        [key: string]: any
+    }
 }

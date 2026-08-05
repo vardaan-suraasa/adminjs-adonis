@@ -1,5 +1,5 @@
 declare module '@ioc:Adonis/Addons/AdminJS' {
-    import { BaseResource, Filter, ParamsType } from 'adminjs'
+    import { BaseProperty, BaseResource, Filter, ParamsType } from 'adminjs'
     import type {
         LucidModel,
         ModelQueryBuilderContract,
@@ -21,17 +21,21 @@ declare module '@ioc:Adonis/Addons/AdminJS' {
         public properties(): Property[]
 
         /**
-         * Helper to get property for the given column
+         * Helper to get property for the given column, or a synthetic
+         * {@link BaseProperty} for the reserved search path / a registered
+         * virtual filter path
          */
-        public property(path: string): Property | null
+        public property(path: string): Property | BaseProperty | null
 
         /**
-         * Helper to apply filters on a given query
+         * Helper to apply filters (including virtual filters & the generic
+         * search) on a given query. Mutates `query` in place; doesn't return
+         * it, since Lucid query builders are themselves thenable.
          */
         public applyFilter(
             query: ModelQueryBuilderContract<LucidModel>,
             filter: Filter
-        ): ModelQueryBuilderContract<LucidModel>
+        ): Promise<void>
 
         /**
          * Returns number of objects matching the given filter

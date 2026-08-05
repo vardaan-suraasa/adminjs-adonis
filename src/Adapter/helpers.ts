@@ -28,6 +28,7 @@ export function getAdminColumnOptions(model: LucidModel, columnKey: string) {
         unique: providedOptions?.unique ?? columnOptions.isPrimary,
         enum: providedOptions?.enum,
         sortable: providedOptions?.sortable || false,
+        searchable: providedOptions?.searchable || false,
         optional:
             providedOptions?.optional ??
             (columnOptions.meta?.autoCreate ||

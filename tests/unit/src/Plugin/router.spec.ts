@@ -68,6 +68,95 @@ test.group('Router | createRouteHandler', (group) => {
         )
         assert.isTrue(responseSendSpy.calledOnceWith('Sample HTML Text'))
     })
+
+    test('passes current admin from the guard named in an auth:<guard> middleware', async ({
+        assert,
+        application,
+    }) => {
+        const ssoUser = { uuid: 'sso-user' }
+        const defaultUser = { uuid: 'default-user' }
+
+        ;(ctx as any).auth = {
+            user: defaultUser,
+            use: (guard: string) => {
+                assert.strictEqual(guard, 'sso')
+
+                return { user: ssoUser }
+            },
+        }
+
+        const router = application.container.make(Router, [
+            admin,
+            {
+                enabled: true,
+                middlewares: ['auth:sso'],
+            },
+        ])
+
+        let receivedCurrentAdmin: unknown
+
+        class ControllerWithCapture {
+            public admin: AdminJS
+
+            constructor(_ctorArgs: { admin: AdminJS }, currentAdmin: unknown) {
+                this.admin = _ctorArgs.admin
+                receivedCurrentAdmin = currentAdmin
+            }
+
+            public test() {
+                return 'Sample HTML Text'
+            }
+        }
+
+        const handler = router.createRouteHandler({
+            ...route,
+            Controller: ControllerWithCapture,
+        })
+
+        await handler(ctx)
+
+        assert.strictEqual(receivedCurrentAdmin, ssoUser)
+    })
+
+    test('falls back to the default guard when no auth:<guard> middleware is configured', async ({
+        assert,
+        application,
+    }) => {
+        const defaultUser = { uuid: 'default-user' }
+
+        ;(ctx as any).auth = { user: defaultUser }
+
+        const router = application.container.make(Router, [
+            admin,
+            {
+                enabled: true,
+            },
+        ])
+
+        let receivedCurrentAdmin: unknown
+
+        class ControllerWithCapture {
+            public admin: AdminJS
+
+            constructor(_ctorArgs: { admin: AdminJS }, currentAdmin: unknown) {
+                this.admin = _ctorArgs.admin
+                receivedCurrentAdmin = currentAdmin
+            }
+
+            public test() {
+                return 'Sample HTML Text'
+            }
+        }
+
+        const handler = router.createRouteHandler({
+            ...route,
+            Controller: ControllerWithCapture,
+        })
+
+        await handler(ctx)
+
+        assert.strictEqual(receivedCurrentAdmin, defaultUser)
+    })
 })
 
 test.group('Router | createAssetHandler', (group) => {

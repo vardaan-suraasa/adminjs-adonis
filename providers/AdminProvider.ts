@@ -85,7 +85,17 @@ export default class AdminProvider {
                     )()
 
                     if (!options.resources) {
-                        options.resources = models
+                        options.resources = models.map((model) => ({
+                            resource: model,
+                            options: {
+                                ...(model.$adminResourceOptions || {}),
+                                actions: {
+                                    ...(model.$adminResourceOptions?.actions ||
+                                        {}),
+                                    ...(model.$adminActions || {}),
+                                },
+                            },
+                        }))
                     } else if (config.adapter.models) {
                         throw new Error(
                             `You cannot pass both 'adapter.models' and 'adminjs.resources'`

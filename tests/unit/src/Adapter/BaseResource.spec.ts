@@ -1,5 +1,9 @@
 import { BaseResource } from '../../../../src/Adapter/BaseResource'
 import { LucidRecord } from '../../../../src/Adapter/Record'
+import {
+    adminFilter,
+    SEARCH_PROPERTY_PATH,
+} from '../../../../src/Adapter/decorators'
 import { test } from '@japa/runner'
 import { Filter, ValidationError } from 'adminjs'
 import { DateTime } from 'luxon'
@@ -63,6 +67,65 @@ test.group('Resource | property', (group) => {
         assert.strictEqual(resource.property('abc'), null)
         assert.isFalse(stub.called)
     })
+
+    test('returns a synthetic BaseProperty for the reserved search path', ({
+        assert,
+        application,
+        models,
+    }) => {
+        const resource = application.container.make(BaseResource, [models.User])
+
+        const property = resource.property(SEARCH_PROPERTY_PATH)
+
+        assert.isNotNull(property)
+        assert.notInstanceOf(property, propertyImport.Property)
+        assert.strictEqual(property!.path(), SEARCH_PROPERTY_PATH)
+        assert.strictEqual(property!.type(), 'string')
+        assert.isFalse(property!.isSortable())
+    })
+
+    test('returns a synthetic BaseProperty for a registered virtual filter path', ({
+        assert,
+        application,
+        models,
+    }) => {
+        const UserModel = models.User
+
+        class User extends UserModel {
+            @adminFilter('phoneNumber', { type: 'number' })
+            public static async filterByPhoneNumber() {
+                return () => {}
+            }
+        }
+
+        const resource = application.container.make(BaseResource, [User])
+
+        const property = resource.property('phoneNumber')
+
+        assert.isNotNull(property)
+        assert.notInstanceOf(property, propertyImport.Property)
+        assert.strictEqual(property!.path(), 'phoneNumber')
+        assert.strictEqual(property!.type(), 'number')
+    })
+
+    test('defaults a virtual filter without an explicit type to string', ({
+        assert,
+        application,
+        models,
+    }) => {
+        const UserModel = models.User
+
+        class User extends UserModel {
+            @adminFilter('phoneNumber')
+            public static async filterByPhoneNumber() {
+                return () => {}
+            }
+        }
+
+        const resource = application.container.make(BaseResource, [User])
+
+        assert.strictEqual(resource.property('phoneNumber')!.type(), 'string')
+    })
 })
 
 test.group('Resource | applyFilter', (group) => {
@@ -73,7 +136,7 @@ test.group('Resource | applyFilter', (group) => {
         propertyImport = await import('../../../../src/Adapter/Property')
     })
 
-    test('applies filters correctly to query', ({
+    test('applies filters correctly to query', async ({
         assert,
         application,
         models,
@@ -132,7 +195,7 @@ test.group('Resource | applyFilter', (group) => {
         const whereBetweenStub = sinon.stub(query, 'whereBetween')
         const whereLikeStub = sinon.stub(query, 'whereLike')
 
-        resource.applyFilter(query, filter)
+        await resource.applyFilter(query, filter)
 
         assert.isTrue(whereStub.calledWith('id', '1'))
         assert.isTrue(whereStub.calledWith('username', 'test'))
@@ -146,7 +209,7 @@ test.group('Resource | applyFilter', (group) => {
         assert.isTrue(whereLikeStub.calledOnceWith('email', '%test@test.com%'))
     })
 
-    test('skips filter on uuid when uuid is malformed', ({
+    test('skips filter on uuid when uuid is malformed', async ({
         assert,
         application,
         models,
@@ -205,7 +268,7 @@ test.group('Resource | applyFilter', (group) => {
         const whereBetweenStub = sinon.stub(query, 'whereBetween')
         const whereLikeStub = sinon.stub(query, 'whereLike')
 
-        resource.applyFilter(query, filter)
+        await resource.applyFilter(query, filter)
 
         assert.isTrue(whereStub.calledWith('id', '1'))
         assert.isTrue(whereStub.calledWith('username', 'test'))
@@ -214,6 +277,245 @@ test.group('Resource | applyFilter', (group) => {
             whereBetweenStub.calledOnceWith('createdAt', ['from', 'to'])
         )
         assert.isTrue(whereLikeStub.calledOnceWith('email', '%test@test.com%'))
+    })
+
+    test('converts enum value before applying filter', async ({
+        assert,
+        application,
+        models,
+    }) => {
+        const UserModel = models.User
+        const { column } = application.container.use('Adonis/Lucid/Orm')
+
+        enum UserType {
+            USER = 1,
+            ADMIN = 2,
+        }
+
+        class User extends UserModel {
+            @column()
+            public type: number
+        }
+
+        User.$adminColumnOptions = {
+            type: {
+                enum: UserType,
+            },
+        }
+
+        const resource = application.container.make(BaseResource, [User])
+        const query = models.User.query()
+        const filter = new Filter({ type: 'admin' }, resource)
+
+        const whereStub = sinon.stub(query, 'where')
+
+        await resource.applyFilter(query, filter)
+
+        assert.isTrue(whereStub.calledOnceWith('type', UserType.ADMIN))
+    })
+})
+
+test.group(
+    'Resource | applyFilter | virtual filter (@adminFilter)',
+    (group) => {
+        group.each.teardown(() => sinon.restore())
+
+        test('resolves the virtual filter and applies its where callback', async ({
+            assert,
+            application,
+            models,
+        }) => {
+            const UserModel = models.User
+            const resolve = sinon.stub().resolves(
+                sinon.stub().callsFake((builder) => {
+                    builder.where('username', 'resolved-value')
+                })
+            )
+
+            class User extends UserModel {
+                @adminFilter('phoneNumber')
+                public static async filterByPhoneNumber(value: string) {
+                    return resolve(value)
+                }
+            }
+
+            const resource = application.container.make(BaseResource, [User])
+            const query = User.query()
+            const filter = new Filter({ phoneNumber: '12345' }, resource)
+
+            await resource.applyFilter(query, filter)
+
+            assert.isTrue(resolve.calledOnceWith('12345'))
+            assert.deepEqual(query.toSQL().bindings, ['resolved-value'])
+            assert.include(query.toSQL().sql, '`username` = ?')
+        })
+
+        test('does not treat a virtual filter path as a real column filter', async ({
+            assert,
+            application,
+            models,
+        }) => {
+            const UserModel = models.User
+
+            class User extends UserModel {
+                @adminFilter('phoneNumber')
+                public static async filterByPhoneNumber(value: string) {
+                    return (builder: any) => builder.where('username', value)
+                }
+            }
+
+            const resource = application.container.make(BaseResource, [User])
+            const query = User.query()
+            const whereStub = sinon.stub(query, 'where')
+            const filter = new Filter({ phoneNumber: 'foo' }, resource)
+
+            await resource.applyFilter(query, filter)
+
+            // only the resolved virtual-filter callback should be passed to `where`,
+            // never the raw filter value being applied against a `phoneNumber` column
+            assert.isTrue(whereStub.calledOnce)
+            assert.isFunction(whereStub.firstCall.args[0])
+        })
+    }
+)
+
+test.group('Resource | applyFilter | generic search', (group) => {
+    group.each.teardown(() => sinon.restore())
+
+    test('OR-combines every column marked searchable', async ({
+        assert,
+        application,
+        models,
+    }) => {
+        const UserModel = models.User
+        const { column } = application.container.use('Adonis/Lucid/Orm')
+
+        class User extends UserModel {
+            @column()
+            public email: string
+        }
+
+        User.$adminColumnOptions = {
+            username: { searchable: true },
+            email: { searchable: true },
+        }
+
+        const resource = application.container.make(BaseResource, [User])
+        const query = User.query()
+        const filter = new Filter({ [SEARCH_PROPERTY_PATH]: 'foo' }, resource)
+
+        await resource.applyFilter(query, filter)
+
+        const { sql, bindings } = query.toSQL()
+
+        assert.include(sql, '`username` like ?')
+        assert.include(sql, '`email` like ?')
+        assert.include(sql, ' or ')
+        assert.deepEqual(bindings, ['%foo%', '%foo%'])
+    })
+
+    test('includes a virtual filter marked includeInSearch, ANDed with other active filters', async ({
+        assert,
+        application,
+        models,
+    }) => {
+        const UserModel = models.User
+        const { column } = application.container.use('Adonis/Lucid/Orm')
+
+        class User extends UserModel {
+            @column()
+            public email: string
+
+            @adminFilter('phoneNumber', { includeInSearch: true })
+            public static async filterByPhoneNumber(value: string) {
+                return (builder: any) => builder.where('email', value)
+            }
+        }
+
+        User.$adminColumnOptions = {
+            username: { searchable: true },
+        }
+
+        const resource = application.container.make(BaseResource, [User])
+        const query = User.query()
+        const filter = new Filter(
+            { [SEARCH_PROPERTY_PATH]: 'foo', id: '5' },
+            resource
+        )
+
+        await resource.applyFilter(query, filter)
+
+        const { sql, bindings } = query.toSQL()
+
+        assert.include(sql, '`id` = ?')
+        assert.include(sql, '`username` like ?')
+        assert.include(sql, '`email` = ?')
+        assert.deepEqual(bindings, ['5', '%foo%', 'foo'])
+    })
+
+    test('a virtual filter not marked includeInSearch is left out of the search', async ({
+        assert,
+        application,
+        models,
+    }) => {
+        const UserModel = models.User
+
+        class User extends UserModel {
+            @adminFilter('phoneNumber')
+            public static async filterByPhoneNumber(value: string) {
+                return (builder: any) => builder.where('username', value)
+            }
+        }
+
+        User.$adminColumnOptions = {
+            username: { searchable: true },
+        }
+
+        const resource = application.container.make(BaseResource, [User])
+        const query = User.query()
+        const filter = new Filter({ [SEARCH_PROPERTY_PATH]: 'foo' }, resource)
+
+        await resource.applyFilter(query, filter)
+
+        const { sql, bindings } = query.toSQL()
+
+        assert.include(sql, '`username` like ?')
+        assert.notInclude(sql, 'or')
+        assert.deepEqual(bindings, ['%foo%'])
+    })
+
+    test('applies no where clause when the search value is empty', async ({
+        assert,
+        application,
+        models,
+    }) => {
+        const resource = application.container.make(BaseResource, [models.User])
+        const query = models.User.query()
+        const filter = new Filter({ [SEARCH_PROPERTY_PATH]: '' }, resource)
+
+        await resource.applyFilter(query, filter)
+
+        const { sql, bindings } = query.toSQL()
+
+        assert.notInclude(sql, 'where')
+        assert.deepEqual(bindings, [])
+    })
+
+    test('applies no where clause when there are no searchable columns or virtual filters', async ({
+        assert,
+        application,
+        models,
+    }) => {
+        const resource = application.container.make(BaseResource, [models.User])
+        const query = models.User.query()
+        const filter = new Filter({ [SEARCH_PROPERTY_PATH]: 'foo' }, resource)
+
+        await resource.applyFilter(query, filter)
+
+        const { sql, bindings } = query.toSQL()
+
+        assert.notInclude(sql, 'where')
+        assert.deepEqual(bindings, [])
     })
 })
 
@@ -232,7 +534,7 @@ test.group('Resource | count', (group) => {
 
         const applyFilterStub = sinon
             .stub(resource, 'applyFilter')
-            .returnsArg(0)
+            .returns(Promise.resolve())
         const queryCountStub = sinon
             .stub(ModelQueryBuilder.prototype, 'count')
             .returnsThis()
@@ -271,7 +573,7 @@ test.group('Resource | find', (group) => {
 
         const applyFilterStub = sinon
             .stub(resource, 'applyFilter')
-            .returnsArg(0)
+            .returns(Promise.resolve())
         const limitStub = sinon
             .stub(ModelQueryBuilder.prototype, 'limit')
             .returnsThis()
@@ -325,7 +627,7 @@ test.group('Resource | find', (group) => {
 
         const applyFilterStub = sinon
             .stub(resource, 'applyFilter')
-            .returnsArg(0)
+            .returns(Promise.resolve())
         const limitStub = sinon
             .stub(ModelQueryBuilder.prototype, 'limit')
             .returnsThis()
@@ -508,6 +810,35 @@ test.group('Resource | sanitizeParams', (group) => {
         })
         assert.isTrue(enumStub.calledOnceWith(UserType, 1))
     })
+
+    test('wraps a serialize error with the property path & resource id', async ({
+        assert,
+        application,
+        models,
+    }) => {
+        const UserModel = models.User
+
+        class User extends UserModel {
+            public static $adminColumnOptions = {
+                username: {
+                    serialize: () => {
+                        throw new Error('boom')
+                    },
+                },
+            }
+        }
+
+        const resource = application.container.make(BaseResource, [User])
+
+        try {
+            await resource.sanitizeParams(new User().fill({ id: 1 }))
+            assert.fail('expected sanitizeParams to throw')
+        } catch (error) {
+            assert.include(error.message, 'username')
+            assert.include(error.message, resource.id())
+            assert.include(error.message, 'boom')
+        }
+    })
 })
 
 test.group('Resource | validateParams', (group) => {
@@ -596,6 +927,70 @@ test.group('Resource | validateParams', (group) => {
         } catch (e) {
             assert.instanceOf(e, ValidationError)
         }
+    })
+
+    test('leaves attachment untouched when submitted value is its existing url', async ({
+        assert,
+        application,
+        models,
+    }) => {
+        const UserModel = models.User
+        const { column } = application.container.use('Adonis/Lucid/Orm')
+
+        class User extends UserModel {
+            @column()
+            public attachment: string
+        }
+
+        User.$adminColumnOptions = {
+            attachment: {
+                type: 'file',
+                optional: true,
+            },
+        }
+
+        const resource = application.container.make(BaseResource, [User])
+        const params = {
+            username: 'hello-world',
+            password: 'Hi!',
+            attachment: 'https://example.com/existing-file.pdf',
+        }
+
+        const validatedData = await resource.validateParams(params)
+
+        assert.isFalse('attachment' in validatedData)
+    })
+
+    test('nulls out attachment when submitted value is an empty string', async ({
+        assert,
+        application,
+        models,
+    }) => {
+        const UserModel = models.User
+        const { column } = application.container.use('Adonis/Lucid/Orm')
+
+        class User extends UserModel {
+            @column()
+            public attachment: string
+        }
+
+        User.$adminColumnOptions = {
+            attachment: {
+                type: 'file',
+                optional: true,
+            },
+        }
+
+        const resource = application.container.make(BaseResource, [User])
+        const params = {
+            username: 'hello-world',
+            password: 'Hi!',
+            attachment: '',
+        }
+
+        const validatedData = await resource.validateParams(params)
+
+        assert.isNull(validatedData.attachment)
     })
 })
 

@@ -1,5 +1,7 @@
 import type {
+    ActionDecorator,
     AdminColumnOptions,
+    FilterDecorator,
     HookDecorator,
 } from '@ioc:Adonis/Addons/AdminJS'
 import type {
@@ -20,6 +22,47 @@ export function adminColumn(options: Partial<AdminColumnOptions>) {
         model.$adminColumnOptions![property] = options
     }
 }
+
+/**
+ * Reserved filter path for the generic, multi-column search box.
+ */
+export const SEARCH_PROPERTY_PATH = 'search'
+
+/**
+ * Registers a static method as a virtual (non-column) filter, available under
+ * the given path in the AdminJS filter drawer.
+ */
+export const adminFilter: FilterDecorator = (path, options = {}) =>
+    function (target, property) {
+        target.boot()
+
+        const model = target as unknown as LucidModel
+
+        model.$defineProperty('$adminFilters', {}, 'inherit')
+        model.$adminFilters![path] = {
+            ...options,
+            resolve: target[property].bind(target),
+        }
+    }
+
+/**
+ * Registers a static method as a custom AdminJS action (resource, record or
+ * bulk) for this model, automatically wired into the resource's
+ * `options.actions` by {@link AdminProvider}.
+ */
+export const adminAction: ActionDecorator = (name, options) =>
+    function (target, property) {
+        target.boot()
+
+        const model = target as unknown as LucidModel
+
+        model.$defineProperty('$adminActions', {}, 'inherit')
+        model.$adminActions![name] = {
+            ...options,
+            name,
+            handler: target[property].bind(target),
+        }
+    }
 
 export const beforeCreate: HookDecorator<LucidRow> = () =>
     function (target, property) {
