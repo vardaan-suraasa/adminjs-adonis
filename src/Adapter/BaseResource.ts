@@ -195,7 +195,10 @@ export class BaseResource extends BaseAdminResource {
 
                 // Pass the raw AdminJS filter value through (string or
                 // `{ from, to }` range) — do not String() objects.
-                const applyWhere = await virtualFilter.resolve(value)
+                const applyWhere = await virtualFilter.resolve.call(
+                    this.model,
+                    value
+                )
                 query.where(applyWhere)
                 continue
             }
@@ -277,7 +280,7 @@ export class BaseResource extends BaseAdminResource {
             this.model.$adminFilters || {}
         )) {
             if (filterOptions.includeInSearch) {
-                wheres.push(await filterOptions.resolve(value))
+                wheres.push(await filterOptions.resolve.call(this.model, value))
             }
         }
 

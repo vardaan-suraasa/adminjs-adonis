@@ -380,3 +380,23 @@ documented here. See
 [here](./adonis-typings/adapter/decorator.ts#ActionDecoratorOptions) for the
 explicitly-typed fields, or [AdminJS's own docs](https://docs.adminjs.co/basics/action)
 for the full list of what AdminJS itself supports.
+
+Decorated filters and actions are inherited by model subclasses. Their static
+methods run with `this` set to the concrete model AdminJS registered, so a
+shared base model can safely use `this.query()` or other overridden statics.
+Registering the same filter path or action name again on a child is rejected;
+distinct child metadata is isolated from its parent.
+
+Built-in action overrides configured through `$adminResourceOptions.actions`
+are partial options and do not require `actionType`, for example:
+
+```ts
+public static $adminResourceOptions: AdminResourceOptions = {
+    actions: {
+        delete: { isAccessible: false },
+    },
+}
+```
+
+When both `$adminResourceOptions.actions` and `@adminAction` configure the same
+name, the decorator takes precedence.

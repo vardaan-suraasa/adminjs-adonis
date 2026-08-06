@@ -1,8 +1,55 @@
 import type { Router } from '../src/Plugin'
 import AdminJS, { AdminJSOptions } from 'adminjs'
 
-import { AdminConfig } from '@ioc:Adonis/Addons/AdminJS'
+import type {
+    AdminConfig,
+    AdminResourceOptions,
+} from '@ioc:Adonis/Addons/AdminJS'
 import { ApplicationContract } from '@ioc:Adonis/Core/Application'
+import type { LucidModel } from '@ioc:Adonis/Lucid/Orm'
+
+/**
+ * Materializes the AdminJS resource definition for a Lucid model.
+ *
+ * Decorated action metadata can be inherited, so handlers are deliberately
+ * bound here to the concrete model being registered rather than to the class
+ * on which the decorator originally ran.
+ */
+export function buildResourceDefinition(model: LucidModel): {
+    resource: LucidModel
+    options: AdminResourceOptions
+} {
+    const decoratedActions = Object.fromEntries(
+        Object.entries(model.$adminActions || {}).map(([name, action]) => {
+            const { handler, ...options } = action
+
+            Reflect.deleteProperty(options, 'name')
+            Reflect.deleteProperty(options, 'override')
+
+            return [
+                name,
+                {
+                    ...options,
+                    handler: handler.bind(model),
+                },
+            ]
+        })
+    )
+    const resourceOptions = model.$adminResourceOptions || {}
+
+    const options: AdminResourceOptions = {
+        ...resourceOptions,
+        actions: {
+            ...(resourceOptions.actions || {}),
+            ...decoratedActions,
+        },
+    }
+
+    return {
+        resource: model,
+        options,
+    }
+}
 
 export default class AdminProvider {
     constructor(protected app: ApplicationContract) {}
@@ -85,17 +132,7 @@ export default class AdminProvider {
                     )()
 
                     if (!options.resources) {
-                        options.resources = models.map((model) => ({
-                            resource: model,
-                            options: {
-                                ...(model.$adminResourceOptions || {}),
-                                actions: {
-                                    ...(model.$adminResourceOptions?.actions ||
-                                        {}),
-                                    ...(model.$adminActions || {}),
-                                },
-                            },
-                        }))
+                        options.resources = models.map(buildResourceDefinition)
                     } else if (config.adapter.models) {
                         throw new Error(
                             `You cannot pass both 'adapter.models' and 'adminjs.resources'`

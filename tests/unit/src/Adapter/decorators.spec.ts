@@ -80,7 +80,7 @@ test.group('decorator | adminFilter', () => {
         assert.isTrue(User.$adminFilters!.phoneNumber.includeInSearch)
     })
 
-    test('resolve calls the decorated static method bound to the model', async ({
+    test('stores an unbound resolver that can use the concrete child model', async ({
         assert,
         models,
     }) => {
@@ -101,9 +101,19 @@ test.group('decorator | adminFilter', () => {
             }
         }
 
-        await User.$adminFilters!.phoneNumber.resolve('12345')
+        const ParentUser = User
+        const ChildUser = Object.defineProperty(
+            class ChildUser extends ParentUser {},
+            'name',
+            { value: 'User' }
+        )
 
-        assert.strictEqual(receivedThis, User)
+        await ChildUser.$adminFilters!.phoneNumber.resolve.call(
+            ChildUser,
+            '12345'
+        )
+
+        assert.strictEqual(receivedThis, ChildUser)
         assert.strictEqual(receivedValue, '12345')
     })
 
@@ -187,6 +197,73 @@ test.group('decorator | adminFilter', () => {
             return User
         }, /already registered/)
     })
+
+    test('throws when a child registers an inherited filter path', ({
+        assert,
+        models,
+    }) => {
+        const UserModel = models.User
+
+        class User extends UserModel {
+            @adminFilter('phoneNumber')
+            public static async filterByPhoneNumber(_value: string) {
+                return () => {}
+            }
+        }
+
+        const ParentUser = User
+
+        class ChildUser extends ParentUser {
+            public static async filterByPhoneNumberAgain(_value: string) {
+                return () => {}
+            }
+        }
+
+        Object.defineProperty(ChildUser, 'name', { value: 'User' })
+
+        assert.throws(
+            () =>
+                adminFilter('phoneNumber')(
+                    ChildUser as any,
+                    'filterByPhoneNumberAgain'
+                ),
+            /already registered/
+        )
+    })
+
+    test('adding a distinct child filter does not mutate parent metadata', ({
+        assert,
+        models,
+    }) => {
+        const UserModel = models.User
+
+        class User extends UserModel {
+            @adminFilter('phoneNumber')
+            public static async filterByPhoneNumber(_value: string) {
+                return () => {}
+            }
+        }
+
+        const ParentUser = User
+
+        class ChildUser extends ParentUser {
+            public static async filterByAccountState(_value: string) {
+                return () => {}
+            }
+        }
+
+        Object.defineProperty(ChildUser, 'name', { value: 'User' })
+        adminFilter('accountState')(ChildUser as any, 'filterByAccountState')
+
+        assert.deepEqual(Object.keys(ParentUser.$adminFilters!), [
+            'phoneNumber',
+        ])
+        assert.deepEqual(Object.keys(ChildUser.$adminFilters!), [
+            'phoneNumber',
+            'accountState',
+        ])
+        assert.notStrictEqual(ChildUser.$adminFilters, ParentUser.$adminFilters)
+    })
 })
 
 test.group('decorator | adminAction', () => {
@@ -219,7 +296,7 @@ test.group('decorator | adminAction', () => {
         assert.isFunction(action.handler)
     })
 
-    test('handler calls the decorated static method bound to the model', async ({
+    test('stores an unbound handler that can use the concrete child model', async ({
         assert,
         models,
     }) => {
@@ -235,13 +312,20 @@ test.group('decorator | adminAction', () => {
             }
         }
 
-        const result = await User.$adminActions!.deactivate.handler(
+        const ParentUser = User
+        const ChildUser = Object.defineProperty(
+            class ChildUser extends ParentUser {},
+            'name',
+            { value: 'User' }
+        )
+        const result = await User.$adminActions!.deactivate.handler.call(
+            ChildUser,
             {} as any,
             {} as any,
             {} as any
         )
 
-        assert.strictEqual(receivedThis, User)
+        assert.strictEqual(receivedThis, ChildUser)
         assert.deepEqual(result, { notice: { message: 'ok' } })
     })
 
@@ -323,5 +407,73 @@ test.group('decorator | adminAction', () => {
 
             return User
         }, /already registered/)
+    })
+
+    test('throws when a child registers an inherited action name', ({
+        assert,
+        models,
+    }) => {
+        const UserModel = models.User
+
+        class User extends UserModel {
+            @adminAction('deactivate', { actionType: 'record' })
+            public static async deactivate() {
+                return {}
+            }
+        }
+
+        const ParentUser = User
+
+        class ChildUser extends ParentUser {
+            public static async deactivateAgain() {
+                return {}
+            }
+        }
+
+        Object.defineProperty(ChildUser, 'name', { value: 'User' })
+
+        assert.throws(
+            () =>
+                adminAction('deactivate', { actionType: 'record' })(
+                    ChildUser as any,
+                    'deactivateAgain'
+                ),
+            /already registered/
+        )
+    })
+
+    test('adding a distinct child action does not mutate parent metadata', ({
+        assert,
+        models,
+    }) => {
+        const UserModel = models.User
+
+        class User extends UserModel {
+            @adminAction('deactivate', { actionType: 'record' })
+            public static async deactivate() {
+                return {}
+            }
+        }
+
+        const ParentUser = User
+
+        class ChildUser extends ParentUser {
+            public static async exportAll() {
+                return {}
+            }
+        }
+
+        Object.defineProperty(ChildUser, 'name', { value: 'User' })
+        adminAction('exportAll', { actionType: 'resource' })(
+            ChildUser as any,
+            'exportAll'
+        )
+
+        assert.deepEqual(Object.keys(ParentUser.$adminActions!), ['deactivate'])
+        assert.deepEqual(Object.keys(ChildUser.$adminActions!), [
+            'deactivate',
+            'exportAll',
+        ])
+        assert.notStrictEqual(ChildUser.$adminActions, ParentUser.$adminActions)
     })
 })

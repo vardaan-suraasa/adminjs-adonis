@@ -323,7 +323,8 @@ test.group('Resource | applyFilter', (group) => {
 
         await resource.applyFilter(query, filter)
 
-        assert.isTrue(whereStub.calledOnceWith('type', UserType.ADMIN))
+        assert.isTrue(whereStub.calledOnce)
+        assert.deepEqual(whereStub.firstCall.args, ['type', UserType.ADMIN])
     })
 
     test('skips filter when enum value is invalid instead of throwing', async ({
@@ -407,7 +408,7 @@ test.group('Resource | applyFilter', (group) => {
         }
 
         class FakeProperty extends Property {
-            public type() {
+            public type(): 'string' {
                 return 'string'
             }
 
@@ -445,7 +446,7 @@ test.group('Resource | applyFilter', (group) => {
         }
 
         class FakeProperty extends Property {
-            public type() {
+            public type(): 'string' {
                 return 'string'
             }
 
@@ -502,6 +503,43 @@ test.group(
             assert.isTrue(resolve.calledOnceWith('12345'))
             assert.deepEqual(query.toSQL().bindings, ['resolved-value'])
             assert.include(query.toSQL().sql, '`username` = ?')
+        })
+
+        test('binds an inherited virtual filter resolver to the concrete model', async ({
+            assert,
+            application,
+            models,
+        }) => {
+            const UserModel = models.User
+            let receivedThis: unknown
+
+            class User extends UserModel {
+                @adminFilter('phoneNumber')
+                public static async filterByPhoneNumber(
+                    this: unknown,
+                    value: string
+                ) {
+                    receivedThis = this
+
+                    return (builder: any) => builder.where('username', value)
+                }
+            }
+
+            const ParentUser = User
+            const ChildUser = Object.defineProperty(
+                class ChildUser extends ParentUser {},
+                'name',
+                { value: 'User' }
+            )
+            const resource = application.container.make(BaseResource, [
+                ChildUser,
+            ])
+            const query = ChildUser.query()
+            const filter = new Filter({ phoneNumber: '12345' }, resource)
+
+            await resource.applyFilter(query, filter)
+
+            assert.strictEqual(receivedThis, ChildUser)
         })
 
         test('does not treat a virtual filter path as a real column filter', async ({
@@ -863,6 +901,41 @@ test.group('Resource | applyFilter | generic search', (group) => {
         assert.include(sql, '`username` LIKE ? ESCAPE ?')
         assert.include(sql, '`email` = ?')
         assert.deepEqual(bindings, ['5', '%foo%', '\\', 'foo'])
+    })
+
+    test('binds an inherited search resolver to the concrete model', async ({
+        assert,
+        application,
+        models,
+    }) => {
+        const UserModel = models.User
+        let receivedThis: unknown
+
+        class User extends UserModel {
+            @adminFilter('phoneNumber', { includeInSearch: true })
+            public static async filterByPhoneNumber(
+                this: unknown,
+                value: string
+            ) {
+                receivedThis = this
+
+                return (builder: any) => builder.where('username', value)
+            }
+        }
+
+        const ParentUser = User
+        const ChildUser = Object.defineProperty(
+            class ChildUser extends ParentUser {},
+            'name',
+            { value: 'User' }
+        )
+        const resource = application.container.make(BaseResource, [ChildUser])
+        const query = ChildUser.query()
+        const filter = new Filter({ [SEARCH_PROPERTY_PATH]: '12345' }, resource)
+
+        await resource.applyFilter(query, filter)
+
+        assert.strictEqual(receivedThis, ChildUser)
     })
 
     test('a virtual filter not marked includeInSearch is left out of the search', async ({

@@ -25,12 +25,6 @@ export const BUILTIN_ADMIN_ACTIONS = new Set([
     'search',
 ])
 
-/** Paths already registered via `@adminFilter` on a given model class. */
-const registeredFilterPaths = new WeakMap<object, Set<string>>()
-
-/** Action names already registered via `@adminAction` on a given model class. */
-const registeredActionNames = new WeakMap<object, Set<string>>()
-
 /**
  * Define type, optional etc properties for AdminJS
  */
@@ -75,21 +69,19 @@ export const adminFilter: FilterDecorator = (path, options = {}) =>
             )
         }
 
-        const paths = registeredFilterPaths.get(target) || new Set<string>()
-
-        if (paths.has(path)) {
+        if (
+            model.$adminFilters &&
+            Object.prototype.hasOwnProperty.call(model.$adminFilters, path)
+        ) {
             throw new Error(
                 `@adminFilter path "${path}" is already registered on ${model.name}`
             )
         }
 
-        paths.add(path)
-        registeredFilterPaths.set(target, paths)
-
         model.$defineProperty('$adminFilters', {}, 'inherit')
         model.$adminFilters![path] = {
             ...options,
-            resolve: target[property].bind(target),
+            resolve: target[property],
         }
     }
 
@@ -110,22 +102,20 @@ export const adminAction: ActionDecorator = (name, options) =>
             )
         }
 
-        const names = registeredActionNames.get(target) || new Set<string>()
-
-        if (names.has(name)) {
+        if (
+            model.$adminActions &&
+            Object.prototype.hasOwnProperty.call(model.$adminActions, name)
+        ) {
             throw new Error(
                 `@adminAction name "${name}" is already registered on ${model.name}`
             )
         }
 
-        names.add(name)
-        registeredActionNames.set(target, names)
-
         model.$defineProperty('$adminActions', {}, 'inherit')
         model.$adminActions![name] = {
             ...options,
             name,
-            handler: target[property].bind(target),
+            handler: target[property],
         }
     }
 

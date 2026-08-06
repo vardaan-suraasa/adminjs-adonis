@@ -13,6 +13,8 @@
 * Attachment fields: existing URL strings and cleared optional attachments are handled in `validateParams`; clearing a **required** attachment fails validation instead of writing `null`
 * `belongsTo` reference resolved only when exactly one relation matches the FK
 * Current admin user resolved from the authenticated/default guard selected by Adonis auth middleware
+* Inherited virtual filters and decorated actions execute against the concrete registered model; duplicate inherited metadata is rejected without mutating the parent
+* `$adminResourceOptions.actions` accepts partial built-in action overrides, while decorated actions take precedence and no longer expose internal decorator flags to AdminJS
 * `applyFilter` is `async` and mutates the query in place (never returns the thenable Lucid builder)
 
 ### Breaking
@@ -115,6 +117,5 @@
 * fix: consider auto create when computing optional ([85b0cd1](https://github.com/chirgjin/adminjs-adonis/commit/85b0cd1))
 * chore: install sinon ([00e5fae](https://github.com/chirgjin/adminjs-adonis/commit/00e5fae))
 * Initial commit ([89a7c81](https://github.com/chirgjin/adminjs-adonis/commit/89a7c81))
-
 
 

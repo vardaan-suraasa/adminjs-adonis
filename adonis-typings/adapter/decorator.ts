@@ -380,7 +380,9 @@ declare module '@ioc:Adonis/Addons/AdminJS' {
          */
         actions?: Record<
             string,
-            ActionDecoratorOptions & { handler?: ActionDecoratorHandler }
+            Partial<ActionDecoratorOptions> & {
+                handler?: ActionDecoratorHandler
+            }
         >
         /**
          * Any other AdminJS `ResourceOptions` field (eg. `navigation`, `sort`,
