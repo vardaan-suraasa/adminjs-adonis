@@ -12,7 +12,7 @@
 * Enum filter values are converted via `getEnumValue` before query application; invalid enum filter input is skipped (no 500)
 * Attachment fields: existing URL strings and cleared optional attachments are handled in `validateParams`; clearing a **required** attachment fails validation instead of writing `null`
 * `belongsTo` reference resolved only when exactly one relation matches the FK
-* Current admin user resolved from the first authenticated guard configured by `auth:<guard,...>` middleware
+* Current admin user resolved from the authenticated/default guard selected by Adonis auth middleware
 * `applyFilter` is `async` and mutates the query in place (never returns the thenable Lucid builder)
 
 ### Breaking

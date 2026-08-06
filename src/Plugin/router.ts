@@ -16,12 +16,9 @@ export class Router {
     /**
      * Helper to find the currently authenticated admin user.
      *
-     * `ctx.auth.user` always resolves against the app's *default* auth
-     * guard, which may not be the guard that actually authenticated this
-     * request. If the admin panel is protected via an `auth:<guard>`
-     * middleware (Adonis's convention for naming a specific, non-default
-     * guard), we use that guard explicitly instead of silently falling
-     * back to `undefined`.
+     * Adonis auth middleware updates `ctx.auth` with the authoritative guard
+     * and user for the request. When auth middleware protects the admin panel,
+     * only pass that user to AdminJS when authentication succeeded.
      */
     private getCurrentAdmin(ctx: HttpContextContract) {
         const auth = (ctx as any).auth
@@ -30,34 +27,19 @@ export class Router {
             return undefined
         }
 
-        const authMiddleware = (
+        const hasAuthMiddleware = (
             (this.config.enabled && this.config.middlewares) ||
             []
-        ).find(
+        ).some(
             (middleware) =>
                 middleware === 'auth' || middleware.startsWith('auth:')
         )
 
-        // Only the first `auth` / `auth:*` middleware entry is considered.
-        const guards = authMiddleware
-            ?.split(':')[1]
-            ?.split(',')
-            .map((guard) => guard.trim())
-            .filter(Boolean)
-
-        if (!guards?.length) {
+        if (!hasAuthMiddleware) {
             return auth.user
         }
 
-        for (const guard of guards) {
-            const guardAuth = auth.use(guard)
-
-            if (guardAuth.isAuthenticated === true) {
-                return guardAuth.user
-            }
-        }
-
-        return undefined
+        return auth.isAuthenticated ? auth.user : undefined
     }
 
     /**

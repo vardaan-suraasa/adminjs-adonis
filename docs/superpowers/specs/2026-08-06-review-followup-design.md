@@ -51,10 +51,16 @@ continues to receive the raw AdminJS value.
 
 ### Guard selection
 
-For bare `auth`, use `ctx.auth.user`. For `auth:web,api`, parse every configured
-guard in order and inspect each guard instance. Return the user from the first
-guard whose `isAuthenticated` flag is true. If no explicit guard authenticated,
-return `undefined`; do not guess a principal from the first configured guard.
+Adonis auth middleware makes the guard that authenticated the request the
+authoritative `ctx.auth.defaultGuard`, and `ctx.auth.user` resolves against that
+guard. When any configured plugin middleware is `auth` or begins with `auth:`,
+return `ctx.auth.user` only when `ctx.auth.isAuthenticated` is true. This remains
+correct for comma-separated guards and for multiple auth middleware entries,
+without reparsing middleware text or calling `ctx.auth.use`.
+
+If no auth middleware is configured, preserve the existing `ctx.auth.user`
+fallback. If `ctx.auth` is absent, or configured auth middleware did not
+authenticate the request, return `undefined`.
 
 ### Decorator inheritance and provider action construction
 
@@ -114,4 +120,3 @@ Tests follow red-green TDD and cover:
   required clear attachment behavior;
 - the existing runtime suite, source TypeScript, test TypeScript, lint,
   formatting, build, and `git diff --check`.
-

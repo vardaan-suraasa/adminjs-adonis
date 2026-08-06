@@ -84,20 +84,16 @@ test.group('Router | createRouteHandler', (group) => {
         assert.isTrue(responseSendSpy.calledOnceWith('Sample HTML Text'))
     })
 
-    test('passes current admin from the guard named in an auth:<guard> middleware', async ({
+    test('passes the authenticated user selected by an auth:<guard> middleware', async ({
         assert,
         application,
     }) => {
         const ssoUser = { uuid: 'sso-user' }
-        const defaultUser = { uuid: 'default-user' }
 
         ;(ctx as any).auth = {
-            user: defaultUser,
-            use: (guard: string) => {
-                assert.strictEqual(guard, 'sso')
-
-                return { user: ssoUser, isAuthenticated: true }
-            },
+            defaultGuard: 'sso',
+            isAuthenticated: true,
+            user: ssoUser,
         }
 
         const router = application.container.make(Router, [
@@ -118,31 +114,28 @@ test.group('Router | createRouteHandler', (group) => {
         assert.strictEqual(receivedCurrentAdmin, ssoUser)
     })
 
-    test('uses the first authenticated guard when auth middleware lists multiple guards', async ({
+    test('passes the authenticated user selected by canonical multi-guard middleware', async ({
         assert,
         application,
     }) => {
         const webUser = { uuid: 'web-user' }
         const apiUser = { uuid: 'api-user' }
-        const defaultUser = { uuid: 'default-user' }
-        const guardLookups: string[] = []
+        const useGuardStub = sinon
+            .stub()
+            .returns({ user: webUser, isAuthenticated: true })
 
         ;(ctx as any).auth = {
-            user: defaultUser,
-            use: (guard: string) => {
-                guardLookups.push(guard)
-
-                return guard === 'web'
-                    ? { user: webUser, isAuthenticated: false }
-                    : { user: apiUser, isAuthenticated: true }
-            },
+            defaultGuard: 'api',
+            isAuthenticated: true,
+            user: apiUser,
+            use: useGuardStub,
         }
 
         const router = application.container.make(Router, [
             admin,
             {
                 enabled: true,
-                middlewares: ['shield', 'auth: web, , api ', 'auth:sso'],
+                middlewares: ['auth:web,api'],
             },
         ])
 
@@ -154,7 +147,39 @@ test.group('Router | createRouteHandler', (group) => {
         await handler(ctx)
 
         assert.strictEqual(receivedCurrentAdmin, apiUser)
-        assert.deepEqual(guardLookups, ['web', 'api'])
+        assert.isFalse(useGuardStub.called)
+    })
+
+    test('uses the authoritative guard selected by a later auth middleware', async ({
+        assert,
+        application,
+    }) => {
+        const webUser = { uuid: 'web-user' }
+        const apiUser = { uuid: 'api-user' }
+
+        ;(ctx as any).auth = {
+            defaultGuard: 'api',
+            isAuthenticated: true,
+            user: apiUser,
+            use: () => ({ user: webUser, isAuthenticated: true }),
+        }
+
+        const router = application.container.make(Router, [
+            admin,
+            {
+                enabled: true,
+                middlewares: ['auth:web', 'auth:api'],
+            },
+        ])
+
+        const handler = router.createRouteHandler({
+            ...route,
+            Controller: ControllerWithCapture,
+        })
+
+        await handler(ctx)
+
+        assert.strictEqual(receivedCurrentAdmin, apiUser)
     })
 
     test('uses the default auth user when bare auth middleware is configured', async ({
@@ -163,7 +188,10 @@ test.group('Router | createRouteHandler', (group) => {
     }) => {
         const defaultUser = { uuid: 'default-user' }
 
-        ;(ctx as any).auth = { user: defaultUser }
+        ;(ctx as any).auth = {
+            isAuthenticated: true,
+            user: defaultUser,
+        }
 
         const router = application.container.make(Router, [
             admin,
@@ -235,19 +263,10 @@ test.group('Router | createRouteHandler', (group) => {
         assert,
         application,
     }) => {
-        const webUser = { uuid: 'web-user' }
-        const apiUser = { uuid: 'api-user' }
-        const guardLookups: string[] = []
-
         ;(ctx as any).auth = {
+            defaultGuard: 'api',
+            isAuthenticated: false,
             user: { uuid: 'default-user' },
-            use: (guard: string) => {
-                guardLookups.push(guard)
-
-                return guard === 'web'
-                    ? { user: webUser, isAuthenticated: false }
-                    : { user: apiUser, isAuthenticated: false }
-            },
         }
 
         const router = application.container.make(Router, [
@@ -266,7 +285,6 @@ test.group('Router | createRouteHandler', (group) => {
         await handler(ctx)
 
         assert.isUndefined(receivedCurrentAdmin)
-        assert.deepEqual(guardLookups, ['web', 'api'])
     })
 })
 

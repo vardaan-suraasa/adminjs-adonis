@@ -103,7 +103,7 @@ git add src/Adapter/BaseResource.ts src/Adapter/helpers.ts tests/unit/src/Adapte
 git commit -m "fix: make admin search filters literal"
 ```
 
-### Task 2: Select the authenticated guard
+### Task 2: Use the guard selected by Adonis auth middleware
 
 **Files:**
 - Modify: `src/Plugin/router.ts`
@@ -111,58 +111,46 @@ git commit -m "fix: make admin search filters literal"
 - Modify: `templates/config.txt`
 - Modify: `CHANGELOG.md`
 
-- [ ] **Step 1: Replace the first-guard test with failing authentication-state cases**
+- [ ] **Step 1: Add failing authoritative-auth-state cases**
 
-Model `auth.use(name)` returning:
+Model `ctx.auth.defaultGuard === 'api'`, `ctx.auth.user === apiUser`, and
+`ctx.auth.isAuthenticated === true`. Cover both canonical `auth:web,api` and
+multiple middleware entries such as `['auth:web', 'auth:api']`, where the later
+middleware selected the authoritative guard. Assert `currentAdmin === apiUser`.
+Retain cases for one explicit guard, bare `auth`, no matching middleware, absent
+`ctx.auth`, and configured auth middleware that did not authenticate.
 
-```ts
-{
-    user: webUser,
-    isAuthenticated: false,
-}
-```
-
-for `web`, and:
-
-```ts
-{
-    user: apiUser,
-    isAuthenticated: true,
-}
-```
-
-for `api`. Assert `currentAdmin === apiUser`. Retain cases for one explicit
-guard, bare `auth`, no matching middleware, and absent `ctx.auth`.
-
-- [ ] **Step 2: Run the router tests and verify second-guard selection fails**
+- [ ] **Step 2: Run the router tests and verify reparsing middleware fails**
 
 Run:
 
 ```bash
-yarn test tests/unit/src/Plugin/router.spec.ts
+yarn test --files="tests/unit/src/Plugin/router.spec.ts"
 ```
 
-Expected: the new multi-guard case receives the wrong/undefined user.
+Expected: the old implementation calls `auth.use` or returns the user from an
+earlier textual middleware entry instead of the authoritative `ctx.auth.user`.
 
-- [ ] **Step 3: Implement authenticated-guard selection**
+- [ ] **Step 3: Trust the auth state finalized by Adonis middleware**
 
-Parse all comma-separated guard names from the first matching `auth:*`
-middleware. Return the user from the first `auth.use(guard)` instance whose
-`isAuthenticated` is true. Bare `auth` and no explicit guard use `auth.user`.
-No authenticated explicit guard returns `undefined`.
+When any configured middleware is exactly `auth` or begins with `auth:`, return
+`ctx.auth.user` only if `ctx.auth.isAuthenticated` is true; otherwise return
+`undefined`. Do not parse guard names or call `ctx.auth.use`. When no auth
+middleware is configured, preserve the existing `ctx.auth.user` fallback.
+Absent `ctx.auth` returns `undefined`.
 
 - [ ] **Step 4: Document the public behavior**
 
 Update `templates/config.txt` and `CHANGELOG.md` to state that multi-guard
-middleware resolves `currentAdmin` from the guard that authenticated, not merely
-the first configured guard.
+middleware resolves `currentAdmin` from the authenticated/default guard selected
+by Adonis middleware.
 
 - [ ] **Step 5: Run focused tests and commit**
 
 Run:
 
 ```bash
-yarn test tests/unit/src/Plugin/router.spec.ts
+yarn test --files="tests/unit/src/Plugin/router.spec.ts"
 ```
 
 Expected: all router tests pass.
@@ -170,8 +158,8 @@ Expected: all router tests pass.
 Commit:
 
 ```bash
-git add src/Plugin/router.ts tests/unit/src/Plugin/router.spec.ts templates/config.txt CHANGELOG.md
-git commit -m "fix: resolve current admin from authenticated guard"
+git add src/Plugin/router.ts tests/unit/src/Plugin/router.spec.ts templates/config.txt CHANGELOG.md docs/superpowers/specs/2026-08-06-review-followup-design.md docs/superpowers/plans/2026-08-06-review-followup.md
+git commit -m "fix: trust Adonis authenticated guard"
 ```
 
 ### Task 3: Make decorator inheritance and provider merging safe
@@ -406,4 +394,3 @@ git status --short
 
 Expected: build succeeds, diff check is empty, and the worktree contains only
 the planned committed changes.
-
