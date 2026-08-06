@@ -277,8 +277,10 @@ reserved path `'search'` (exported as `SEARCH_PROPERTY_PATH`).
 > **Reservation:** do not name a model column `search` if you need this box —
 > a real `search` column takes precedence and disables multi-column search for
 > that resource. `@adminFilter('search', ...)` is rejected at registration.
-> Search and column `LIKE` filters escape `%` / `_` in user input so they are
-> matched literally (best-effort across SQL dialects).
+> Search and string-identifier `LIKE` filters escape `\`, `%`, and `_` in user
+> input and emit an explicit `ESCAPE '\'` clause, so those characters are
+> matched literally instead of relying on a database's default escape
+> semantics.
 
 ```ts
 // User.ts

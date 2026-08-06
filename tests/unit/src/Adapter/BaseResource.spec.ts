@@ -193,7 +193,7 @@ test.group('Resource | applyFilter', (group) => {
 
         const whereStub = sinon.stub(query, 'where')
         const whereBetweenStub = sinon.stub(query, 'whereBetween')
-        const whereLikeStub = sinon.stub(query, 'whereLike')
+        const whereRawStub = sinon.stub(query, 'whereRaw')
 
         await resource.applyFilter(query, filter)
 
@@ -206,7 +206,13 @@ test.group('Resource | applyFilter', (group) => {
         assert.isTrue(
             whereBetweenStub.calledOnceWith('createdAt', ['from', 'to'])
         )
-        assert.isTrue(whereLikeStub.calledOnceWith('email', '%test@test.com%'))
+        assert.isTrue(
+            whereRawStub.calledOnceWith('?? LIKE ? ESCAPE ?', [
+                'email',
+                '%test@test.com%',
+                '\\',
+            ])
+        )
     })
 
     test('skips filter on uuid when uuid is malformed', async ({
@@ -266,7 +272,7 @@ test.group('Resource | applyFilter', (group) => {
 
         const whereStub = sinon.stub(query, 'where')
         const whereBetweenStub = sinon.stub(query, 'whereBetween')
-        const whereLikeStub = sinon.stub(query, 'whereLike')
+        const whereRawStub = sinon.stub(query, 'whereRaw')
 
         await resource.applyFilter(query, filter)
 
@@ -276,7 +282,13 @@ test.group('Resource | applyFilter', (group) => {
         assert.isTrue(
             whereBetweenStub.calledOnceWith('createdAt', ['from', 'to'])
         )
-        assert.isTrue(whereLikeStub.calledOnceWith('email', '%test@test.com%'))
+        assert.isTrue(
+            whereRawStub.calledOnceWith('?? LIKE ? ESCAPE ?', [
+                'email',
+                '%test@test.com%',
+                '\\',
+            ])
+        )
     })
 
     test('converts enum value before applying filter', async ({
@@ -379,6 +391,44 @@ test.group('Resource | applyFilter', (group) => {
         assert.notInclude(sql, '`username` like ?')
         assert.deepEqual(bindings, ['literal-column-value'])
     })
+
+    test('uses an explicit escape character for string identifier filters', async ({
+        assert,
+        application,
+        models,
+    }) => {
+        const { Property } = propertyImport
+        const UserModel = models.User
+        const { column } = application.container.use('Adonis/Lucid/Orm')
+
+        class User extends UserModel {
+            @column()
+            public email: string
+        }
+
+        class FakeProperty extends Property {
+            public type() {
+                return 'string'
+            }
+
+            public isId(): boolean {
+                return this.columnKey === 'email'
+            }
+        }
+
+        sinon.replace(propertyImport, 'Property', FakeProperty)
+        const resource = application.container.make(BaseResource, [User])
+        const query = User.query()
+        const filter = new Filter({ email: 'a%b_c\\d' }, resource)
+
+        await resource.applyFilter(query, filter)
+
+        const { sql, bindings } = query.toSQL()
+
+        assert.include(sql, '`email` LIKE ? ESCAPE ?')
+        assert.deepEqual(bindings, ['%a\\%b\\_c\\\\d%', '\\'])
+        assert.lengthOf(bindings[1] as string, 1)
+    })
 })
 
 test.group(
@@ -468,7 +518,79 @@ test.group(
             assert.notInclude(query.toSQL().sql, 'where')
         })
 
-        test('passes range object through to the virtual filter resolver', async ({
+        test('skips virtual filter when every range bound is empty', async ({
+            assert,
+            application,
+            models,
+        }) => {
+            const UserModel = models.User
+            const resolve = sinon.stub().resolves(() => {})
+
+            class User extends UserModel {
+                @adminFilter('createdRange', { type: 'datetime' })
+                public static async filterByRange(value: {
+                    from: string
+                    to: string
+                }) {
+                    return resolve(value)
+                }
+            }
+
+            const resource = application.container.make(BaseResource, [User])
+            const query = User.query()
+            const filter = new Filter(
+                {
+                    'createdRange~~from': '',
+                    'createdRange~~to': '',
+                },
+                resource
+            )
+
+            await resource.applyFilter(query, filter)
+
+            assert.isTrue(resolve.notCalled)
+            assert.notInclude(query.toSQL().sql, 'where')
+        })
+
+        test('forwards a one-sided non-empty range unchanged', async ({
+            assert,
+            application,
+            models,
+        }) => {
+            const UserModel = models.User
+            const resolve = sinon.stub().resolves(() => {})
+
+            class User extends UserModel {
+                @adminFilter('createdRange', { type: 'datetime' })
+                public static async filterByRange(value: {
+                    from: string
+                    to: string
+                }) {
+                    return resolve(value)
+                }
+            }
+
+            const resource = application.container.make(BaseResource, [User])
+            const query = User.query()
+            const filter = new Filter(
+                {
+                    'createdRange~~from': '2020-01-01',
+                    'createdRange~~to': '',
+                },
+                resource
+            )
+
+            await resource.applyFilter(query, filter)
+
+            assert.isTrue(
+                resolve.calledOnceWith({
+                    from: '2020-01-01',
+                    to: '',
+                })
+            )
+        })
+
+        test('applies the callback returned for a populated virtual range', async ({
             assert,
             application,
             models,
@@ -501,6 +623,8 @@ test.group(
 
             await resource.applyFilter(query, filter)
 
+            const { sql, bindings } = query.toSQL()
+
             // Must receive the range object, not a String()-coerced
             // "[object Object]" (the previous bug).
             assert.isObject(receivedValue)
@@ -509,12 +633,79 @@ test.group(
                 from: '2020-01-01',
                 to: '2020-12-31',
             })
+            assert.include(sql, '`created_at` between ? and ?')
+            assert.deepEqual(bindings, ['2020-01-01', '2020-12-31'])
         })
     }
 )
 
 test.group('Resource | applyFilter | generic search', (group) => {
     group.each.teardown(() => sinon.restore())
+
+    test('matches percent, underscore and backslash literally in SQLite', async ({
+        assert,
+        application,
+        models,
+    }) => {
+        const UserModel = models.User
+        const prefix = `literal-search-${Date.now()}-${Math.random()
+            .toString(16)
+            .slice(2)}`
+        const cases = [
+            {
+                input: `${prefix}-percent-%-row`,
+                alternative: `${prefix}-percent-\\anything-row`,
+            },
+            {
+                input: `${prefix}-underscore-_-row`,
+                alternative: `${prefix}-underscore-\\X-row`,
+            },
+            {
+                input: `${prefix}-backslash-\\-row`,
+                alternative: `${prefix}-backslash-\\\\-row`,
+            },
+        ]
+        const usernames = cases.flatMap(({ input, alternative }) => [
+            input,
+            alternative,
+        ])
+
+        class User extends UserModel {}
+
+        User.$adminColumnOptions = {
+            username: { searchable: true },
+        }
+
+        await User.createMany(
+            usernames.map((username) => ({
+                username,
+                password: 'verysecurehashedpassword',
+            }))
+        )
+
+        try {
+            const resource = application.container.make(BaseResource, [User])
+
+            for (const { input } of cases) {
+                const query = User.query()
+                const filter = new Filter(
+                    { [SEARCH_PROPERTY_PATH]: input },
+                    resource
+                )
+
+                await resource.applyFilter(query, filter)
+
+                const matches = await query
+
+                assert.deepEqual(
+                    matches.map(({ username }) => username),
+                    [input]
+                )
+            }
+        } finally {
+            await User.query().whereIn('username', usernames).delete()
+        }
+    })
 
     test('OR-combines every column marked searchable', async ({
         assert,
@@ -542,10 +733,10 @@ test.group('Resource | applyFilter | generic search', (group) => {
 
         const { sql, bindings } = query.toSQL()
 
-        assert.include(sql, '`username` like ?')
-        assert.include(sql, '`email` like ?')
+        assert.include(sql, '`username` LIKE ? ESCAPE ?')
+        assert.include(sql, '`email` LIKE ? ESCAPE ?')
         assert.include(sql, ' or ')
-        assert.deepEqual(bindings, ['%foo%', '%foo%'])
+        assert.deepEqual(bindings, ['%foo%', '\\', '%foo%', '\\'])
     })
 
     test('includes a virtual filter marked includeInSearch, ANDed with other active filters', async ({
@@ -582,9 +773,9 @@ test.group('Resource | applyFilter | generic search', (group) => {
         const { sql, bindings } = query.toSQL()
 
         assert.include(sql, '`id` = ?')
-        assert.include(sql, '`username` like ?')
+        assert.include(sql, '`username` LIKE ? ESCAPE ?')
         assert.include(sql, '`email` = ?')
-        assert.deepEqual(bindings, ['5', '%foo%', 'foo'])
+        assert.deepEqual(bindings, ['5', '%foo%', '\\', 'foo'])
     })
 
     test('a virtual filter not marked includeInSearch is left out of the search', async ({
@@ -613,9 +804,9 @@ test.group('Resource | applyFilter | generic search', (group) => {
 
         const { sql, bindings } = query.toSQL()
 
-        assert.include(sql, '`username` like ?')
+        assert.include(sql, '`username` LIKE ? ESCAPE ?')
         assert.notInclude(sql, 'or')
-        assert.deepEqual(bindings, ['%foo%'])
+        assert.deepEqual(bindings, ['%foo%', '\\'])
     })
 
     test('applies no where clause when the search value is empty', async ({

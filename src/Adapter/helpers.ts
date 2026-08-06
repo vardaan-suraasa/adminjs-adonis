@@ -3,11 +3,8 @@ import type { LucidModel } from '@ioc:Adonis/Lucid/Orm'
 
 /**
  * Escape LIKE metacharacters so user input is matched literally inside
- * `%...%` patterns. Escapes `\`, `%`, and `_`.
- *
- * Dialects differ on whether `\` is the default ESCAPE character; this is
- * best-effort for predictable admin search UX rather than a portable SQL
- * guarantee.
+ * `%...%` patterns that declare `\` as their explicit escape character.
+ * Escapes `\`, `%`, and `_`.
  */
 export function escapeLikePattern(value: string): string {
     return value.replace(/[\\%_]/g, '\\$&')

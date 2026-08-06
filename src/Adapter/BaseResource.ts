@@ -28,6 +28,35 @@ import { escapeLikePattern, getAdminColumnOptions } from './helpers'
 
 type WhereClause = (builder: ModelQueryBuilderContract<LucidModel>) => void
 
+function isScalarEmpty(value: unknown): boolean {
+    return value === '' || value === null || value === undefined
+}
+
+function isFilterValueEmpty(value: unknown): boolean {
+    if (isScalarEmpty(value)) {
+        return true
+    }
+
+    return (
+        typeof value === 'object' &&
+        value !== null &&
+        !Array.isArray(value) &&
+        Object.values(value).every(isScalarEmpty)
+    )
+}
+
+function whereLikeLiteral(
+    builder: ModelQueryBuilderContract<LucidModel>,
+    column: string,
+    value: string
+): void {
+    builder.whereRaw('?? LIKE ? ESCAPE ?', [
+        column,
+        `%${escapeLikePattern(value)}%`,
+        '\\',
+    ])
+}
+
 /**
  * Resource adapter for AdminJS
  */
@@ -160,7 +189,7 @@ export class BaseResource extends BaseAdminResource {
 
                 // Match applySearch: skip empty submissions so resolvers are
                 // not invoked for vacuous filter UI state.
-                if (value === '' || value === null || value === undefined) {
+                if (isFilterValueEmpty(value)) {
                     continue
                 }
 
@@ -195,10 +224,7 @@ export class BaseResource extends BaseAdminResource {
                         continue
                     }
                 } else if (property.isId() && property.type() === 'string') {
-                    query.whereLike(
-                        key,
-                        `%${escapeLikePattern(filterElement.value)}%`
-                    )
+                    whereLikeLiteral(query, key, filterElement.value)
                 } else {
                     query.where(key, filterElement.value)
                 }
@@ -215,10 +241,11 @@ export class BaseResource extends BaseAdminResource {
      * Helper to apply the generic multi-column search (see
      * {@link SEARCH_PROPERTY_PATH}) on a given query.
      *
-     * OR-combines a `whereLike` for every column marked `searchable: true`
-     * with every registered virtual filter marked `includeInSearch: true`.
-     * Each virtual filter's async work is resolved up front so the final
-     * combination only needs a synchronous query builder callback.
+     * OR-combines an explicit-escape `LIKE` for every column marked
+     * `searchable: true` with every registered virtual filter marked
+     * `includeInSearch: true`. Each virtual filter's async work is resolved up
+     * front so the final combination only needs a synchronous query builder
+     * callback.
      */
     private async applySearch(
         query: ModelQueryBuilderContract<LucidModel>,
@@ -228,14 +255,15 @@ export class BaseResource extends BaseAdminResource {
             return
         }
 
-        const like = `%${escapeLikePattern(value)}%`
         const wheres: WhereClause[] = []
 
         for (const column of this.model.$columnsDefinitions.keys()) {
             if (getAdminColumnOptions(this.model, column).searchable) {
                 // OR composition happens on the outer group; each clause is a
-                // plain `whereLike` (not nested `orWhereLike`).
-                wheres.push((builder) => builder.whereLike(column, like))
+                // plain literal LIKE (not a nested `orWhere`).
+                wheres.push((builder) =>
+                    whereLikeLiteral(builder, column, value)
+                )
             }
         }
 
