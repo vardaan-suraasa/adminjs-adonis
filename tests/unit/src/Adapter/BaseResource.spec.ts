@@ -94,7 +94,7 @@ test.group('Resource | property', (group) => {
         class User extends UserModel {
             @adminFilter('phoneNumber', { type: 'number' })
             public static async filterByPhoneNumber() {
-                return () => {}
+                return () => { }
             }
         }
 
@@ -118,7 +118,7 @@ test.group('Resource | property', (group) => {
         class User extends UserModel {
             @adminFilter('phoneNumber')
             public static async filterByPhoneNumber() {
-                return () => {}
+                return () => { }
             }
         }
 
@@ -311,7 +311,94 @@ test.group('Resource | applyFilter', (group) => {
 
         await resource.applyFilter(query, filter)
 
-        assert.isTrue(whereStub.calledOnceWith('type', UserType.ADMIN))
+        assert.isTrue(whereStub.calledOnce)
+        assert.isTrue(whereStub.calledWith('type', UserType.ADMIN))
+    })
+
+    test('skips the filter instead of throwing when the enum value is malformed', async ({
+        assert,
+        application,
+        models,
+    }) => {
+        const UserModel = models.User
+        const { column } = application.container.use('Adonis/Lucid/Orm')
+
+        enum UserType {
+            USER = 1,
+            ADMIN = 2,
+        }
+
+        class User extends UserModel {
+            @column()
+            public type: number
+        }
+
+        User.$adminColumnOptions = {
+            type: {
+                enum: UserType,
+            },
+        }
+
+        const resource = application.container.make(BaseResource, [User])
+        const query = models.User.query()
+        const filter = new Filter({ type: 'not-a-real-enum-value' }, resource)
+
+        const whereStub = sinon.stub(query, 'where')
+
+        await resource.applyFilter(query, filter)
+
+        assert.isFalse(whereStub.called)
+    })
+
+    test('a real column named the same as the reserved search path is still filtered as a column', async ({
+        assert,
+        application,
+        models,
+    }) => {
+        const UserModel = models.User
+        const { column } = application.container.use('Adonis/Lucid/Orm')
+
+        class User extends UserModel {
+            @column()
+            public search: string
+        }
+
+        const resource = application.container.make(BaseResource, [User])
+        const query = User.query()
+        const filter = new Filter({ search: 'foo' }, resource)
+
+        await resource.applyFilter(query, filter)
+
+        const { sql, bindings } = query.toSQL()
+
+        assert.include(sql, '`search` = ?')
+        assert.deepEqual(bindings, ['foo'])
+    })
+
+    test('a real column filter takes precedence over a same-named @adminFilter', async ({
+        assert,
+        application,
+        models,
+    }) => {
+        const UserModel = models.User
+
+        class User extends UserModel {
+            @adminFilter('username')
+            public static async filterByUsername(_value: string) {
+                return (builder: any) => builder.where('id', 999)
+            }
+        }
+
+        const resource = application.container.make(BaseResource, [User])
+        const query = User.query()
+        const filter = new Filter({ username: 'bob' }, resource)
+
+        await resource.applyFilter(query, filter)
+
+        const { sql, bindings } = query.toSQL()
+
+        assert.include(sql, '`username` = ?')
+        assert.deepEqual(bindings, ['bob'])
     })
 })
 
@@ -375,6 +462,41 @@ test.group(
             // never the raw filter value being applied against a `phoneNumber` column
             assert.isTrue(whereStub.calledOnce)
             assert.isFunction(whereStub.firstCall.args[0])
+        })
+
+        test('a date/datetime-typed filter receives the { from, to } range as-is, not stringified', async ({
+            assert,
+            application,
+            models,
+        }) => {
+            const UserModel = models.User
+            let received: unknown
+
+            class User extends UserModel {
+                @adminFilter('joinedAt', { type: 'date' })
+                public static async filterByJoinedAt(value: unknown) {
+                    received = value
+
+                    return () => { }
+                }
+            }
+
+            const resource = application.container.make(BaseResource, [User])
+            const query = User.query()
+            const filter = new Filter(
+                {
+                    'joinedAt~~from': '2020-01-01',
+                    'joinedAt~~to': '2020-12-31',
+                },
+                resource
+            )
+
+            await resource.applyFilter(query, filter)
+
+            assert.deepEqual(received, {
+                from: '2020-01-01',
+                to: '2020-12-31',
+            })
         })
     }
 )
@@ -991,6 +1113,41 @@ test.group('Resource | validateParams', (group) => {
         const validatedData = await resource.validateParams(params)
 
         assert.isNull(validatedData.attachment)
+    })
+
+    test('throws a validation error when clearing a required attachment', async ({
+        assert,
+        application,
+        models,
+    }) => {
+        const UserModel = models.User
+        const { column } = application.container.use('Adonis/Lucid/Orm')
+
+        class User extends UserModel {
+            @column()
+            public attachment: string
+        }
+
+        User.$adminColumnOptions = {
+            attachment: {
+                type: 'file',
+                optional: false,
+            },
+        }
+
+        const resource = application.container.make(BaseResource, [User])
+        const params = {
+            username: 'hello-world',
+            password: 'Hi!',
+            attachment: '',
+        }
+
+        try {
+            await resource.validateParams(params)
+            assert.fail('expected validateParams to throw a ValidationError')
+        } catch (e) {
+            assert.instanceOf(e, ValidationError)
+        }
     })
 })
 

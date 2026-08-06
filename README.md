@@ -178,10 +178,11 @@ box) rely on to surface a non-column field in the UI.
 
 ### Filtering
 
-By default, filtering works out of the box for every `@column` - text columns
-get an exact-match filter, except columns marked `unique: true` (eg. via
-`@adminColumn({ unique: true })`, or your primary key) which get a partial
-(`LIKE`) match instead.
+By default, filtering works out of the box for every `@column` - most columns
+get an exact-match filter, except **string-typed** columns marked `unique: true`
+(eg. via `@adminColumn({ unique: true })`, or a string primary key) which get a
+partial (`LIKE`) match instead. A numeric primary key (the common case) still
+gets an exact match, since the `LIKE` behavior only kicks in for string values.
 
 #### Virtual & cross-table filters (`@adminFilter`)
 
@@ -266,6 +267,15 @@ resolver that needs to `await` something (like the `Profile` lookup above)
 can't do that work inside such a callback. Instead, `@adminFilter` resolvers
 run their async work up front and return a plain synchronous callback with the
 result baked in, which the adapter then applies to the query.
+
+> **A resolver declared with `type: 'date'` or `type: 'datetime'` receives a
+> `{ from, to }` range object instead of a string.** AdminJS submits those
+> filter types as a from/to range (its built-in date-range picker), so a
+> resolver backing one must branch on the value's shape - eg.
+> `typeof value === 'string' ? ... : query.whereBetween(..., [value.from, value.to])`.
+> Every other filter type always receives a plain string, including when the
+> filter is triggered via the generic search box below (its text input can
+> only ever submit a string).
 
 #### Generic search box
 

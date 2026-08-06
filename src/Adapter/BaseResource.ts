@@ -139,6 +139,56 @@ export class BaseResource extends BaseAdminResource {
         for (const key of Object.keys(filter.filters)) {
             const filterElement = filter.filters[key]
 
+            // A real column's filter always wins over the reserved search path
+            // or a virtual filter that happens to share its path - this mirrors
+            // property()'s own column-first precedence, so a column named eg.
+            // "search", or an `@adminFilter` registered under an existing
+            // column's path, doesn't get silently shadowed at query time.
+            if (filterElement.property instanceof Property) {
+                const property = filterElement.property
+
+                if (typeof filterElement.value === 'string') {
+                    if (
+                        property.type() === 'uuid' &&
+                        !Validator.isUUID(filterElement.value)
+                    ) {
+                        continue
+                    }
+
+                    if (property.columnOptions.enum) {
+                        let enumValue: string | number
+
+                        try {
+                            enumValue = getEnumValue(
+                                property.columnOptions.enum,
+                                filterElement.value
+                            )
+                        } catch {
+                            // malformed/stale filter value that doesn't match
+                            // any enum key or value - skip it rather than
+                            // 500ing the whole list/count request
+                            continue
+                        }
+
+                        query.where(key, enumValue)
+                    } else if (
+                        property.isId() &&
+                        property.type() === 'string'
+                    ) {
+                        query.whereLike(key, `%${filterElement.value}%`)
+                    } else {
+                        query.where(key, filterElement.value)
+                    }
+                } else {
+                    query.whereBetween(key, [
+                        filterElement.value.from,
+                        filterElement.value.to,
+                    ])
+                }
+
+                continue
+            }
+
             if (key === SEARCH_PROPERTY_PATH) {
                 await this.applySearch(query, String(filterElement.value))
                 continue
@@ -148,40 +198,9 @@ export class BaseResource extends BaseAdminResource {
 
             if (virtualFilter) {
                 const applyWhere = await virtualFilter.resolve(
-                    String(filterElement.value)
+                    filterElement.value
                 )
                 query.where(applyWhere)
-                continue
-            }
-
-            const property = filterElement.property as Property
-
-            if (typeof filterElement.value === 'string') {
-                if (
-                    property.type() === 'uuid' &&
-                    !Validator.isUUID(filterElement.value)
-                ) {
-                    continue
-                }
-
-                if (property.columnOptions.enum) {
-                    query.where(
-                        key,
-                        getEnumValue(
-                            property.columnOptions.enum,
-                            filterElement.value
-                        )
-                    )
-                } else if (property.isId() && property.type() === 'string') {
-                    query.whereLike(key, `%${filterElement.value}%`)
-                } else {
-                    query.where(key, filterElement.value)
-                }
-            } else {
-                query.whereBetween(key, [
-                    filterElement.value.from,
-                    filterElement.value.to,
-                ])
             }
         }
     }
@@ -394,11 +413,19 @@ export class BaseResource extends BaseAdminResource {
                     property.isAttachment &&
                     typeof params[property.path()] === 'string'
                 ) {
-                    if (!params[property.path()]) {
-                        unchangedAttachments[property.path()] = null
-                    }
+                    const isCleared = !params[property.path()]
 
-                    return acc
+                    // Clearing a *required* attachment isn't "leave it
+                    // untouched" - it's removing a mandatory value, so it must
+                    // still go through file validation (which rejects the
+                    // empty string) instead of silently saving `null`.
+                    if (!isCleared || !property.isRequired()) {
+                        if (isCleared) {
+                            unchangedAttachments[property.path()] = null
+                        }
+
+                        return acc
+                    }
                 }
 
                 acc[property.path()] = property.getSchemaType()

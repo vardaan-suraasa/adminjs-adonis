@@ -188,12 +188,19 @@ declare module '@ioc:Adonis/Addons/AdminJS' {
      * resolve any async work (eg. querying other tables) up front, returning a
      * synchronous callback that mutates the query builder it's given.
      *
+     * The value is a plain string for most filter types, but AdminJS submits
+     * `date`/`datetime` filters as a `{ from, to }` range instead (see its
+     * `DefaultDatetimeFilterProperty` component) - a resolver backing a filter
+     * declared with one of those types must handle both shapes. When the
+     * filter is used via the generic search box, the value is always a plain
+     * string (the search box's own text input can't submit a range).
+     *
      * The callback is invoked either directly (when the filter is used on its
      * own) or nested inside an `orWhere` group (when it's included in the
      * generic search), so it must not assume it's the only condition applied.
      */
     export type FilterResolver = (
-        value: string
+        value: string | { from: string; to: string }
     ) => Promise<(builder: ModelQueryBuilderContract<LucidModel>) => void>
 
     /**
