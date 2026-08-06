@@ -441,15 +441,30 @@ export class BaseResource extends BaseAdminResource {
      *
      * TODO: add support for JSON
      */
-    public async validateParams(params: ParamsType) {
+    public async validateParams(params: ParamsType, existingRecord?: LucidRow) {
         const propertyHash: Record<string, Property> = {}
-        // A string value for an attachment property means no new file was
-        // uploaded (it's either the existing url or an empty string when the
-        // input was cleared) so it shouldn't go through file validation.
-        const unchangedAttachments: Record<string, null> = {}
+        const attachmentOverrides: Record<string, null> = {}
+        const properties = this.properties()
+        const existingAttachmentValues: Record<string, unknown> = {}
+
+        if (existingRecord) {
+            for (const property of properties) {
+                const value = params[property.path()]
+
+                if (
+                    property.isEditable() &&
+                    property.isAttachment &&
+                    typeof value === 'string' &&
+                    value
+                ) {
+                    existingAttachmentValues[property.path()] =
+                        await property.serialize(existingRecord)
+                }
+            }
+        }
 
         const validatorSchema = this.validator.schema.create(
-            this.properties().reduce((acc, property) => {
+            properties.reduce((acc, property) => {
                 if (!property.isEditable()) {
                     return acc
                 }
@@ -464,12 +479,17 @@ export class BaseResource extends BaseAdminResource {
                         // path so empty clear fails validation instead of
                         // silently writing null.
                         if (property.columnOptions.optional) {
-                            unchangedAttachments[property.path()] = null
+                            attachmentOverrides[property.path()] = null
 
                             return acc
                         }
-                    } else {
-                        // Existing URL string — no new upload; skip file schema
+                    } else if (
+                        existingRecord &&
+                        params[property.path()] ===
+                            existingAttachmentValues[property.path()]
+                    ) {
+                        // AdminJS sends the serialized attachment value back
+                        // during updates when no replacement was uploaded.
                         return acc
                     }
                 }
@@ -497,7 +517,7 @@ export class BaseResource extends BaseAdminResource {
                 }
             })
 
-            return { ...data, ...unchangedAttachments }
+            return { ...data, ...attachmentOverrides }
         } catch (error) {
             if (error instanceof this.validator.ValidationException) {
                 // build AdminJS validation error from Adonis' ValidationException
@@ -544,7 +564,7 @@ export class BaseResource extends BaseAdminResource {
         params: Record<string, any>
     ): Promise<ParamsType> {
         const object = await this.model.findOrFail(id)
-        object.merge(await this.validateParams(params))
+        object.merge(await this.validateParams(params, object))
 
         await this.model.$hooks.exec('before', 'adminUpdate', object)
 

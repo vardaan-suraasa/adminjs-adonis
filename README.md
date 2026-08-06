@@ -75,6 +75,13 @@ export class User extends BaseModel {
 
 For full options provided by adminColumn decorator, visit [here](./adonis-typings/adapter/decorator.ts#AdminColumnOptions)
 
+For attachment columns (`type: 'file'`), AdminJS may submit the existing
+serialized URL during an update. The adapter preserves that value only when it
+exactly matches the attachment on the loaded record. New or changed URL strings
+are not accepted as uploads; they fail file validation. Clearing an optional
+attachment writes `null`, while clearing a required attachment fails
+validation.
+
 ### Hooks
 
 This package also provides hooks for lifecycle management. These hooks are:

@@ -1414,7 +1414,91 @@ test.group('Resource | validateParams', (group) => {
         }
     })
 
-    test('leaves attachment untouched when submitted value is its existing url', async ({
+    test('rejects a required attachment url during create validation', async ({
+        assert,
+        application,
+        models,
+    }) => {
+        const UserModel = models.User
+        const { column } = application.container.use('Adonis/Lucid/Orm')
+
+        class User extends UserModel {
+            @column()
+            public attachment: string
+        }
+
+        User.$adminColumnOptions = {
+            attachment: {
+                type: 'file',
+                optional: false,
+            },
+        }
+
+        const resource = application.container.make(BaseResource, [User])
+        const params = {
+            username: 'hello-world',
+            password: 'Hi!',
+            attachment: 'https://example.com/untrusted-file.pdf',
+        }
+        const saveStub = sinon.stub(User.prototype, 'save')
+
+        await assert.rejects(async () => {
+            await resource.create(params)
+        }, /Resource cannot be stored because of validation errors/)
+        assert.isFalse(saveStub.called)
+    })
+
+    test('leaves attachment untouched when update submits its existing serialized value', async ({
+        assert,
+        application,
+        models,
+    }) => {
+        const UserModel = models.User
+        const { column } = application.container.use('Adonis/Lucid/Orm')
+
+        class User extends UserModel {
+            @column()
+            public attachment: { url: string }
+        }
+
+        User.$adminColumnOptions = {
+            attachment: {
+                type: 'file',
+                optional: false,
+            },
+        }
+
+        const resource = application.container.make(BaseResource, [User])
+        const existingUser = new User()
+        existingUser.attachment = {
+            url: 'https://example.com/existing-file.pdf',
+        }
+        const params = {
+            username: 'hello-world',
+            password: 'Hi!',
+            attachment: 'https://example.com/existing-file.pdf',
+        }
+        const findOrFailStub = sinon
+            .stub(User, 'findOrFail')
+            .resolves(existingUser)
+        const saveStub = sinon
+            .stub(User.prototype, 'save')
+            .resolves(existingUser)
+
+        const updatedData = await resource.update(1, params)
+
+        assert.strictEqual(
+            updatedData.attachment,
+            'https://example.com/existing-file.pdf'
+        )
+        assert.deepEqual(existingUser.attachment, {
+            url: 'https://example.com/existing-file.pdf',
+        })
+        assert.isTrue(findOrFailStub.calledOnceWithExactly(1))
+        assert.isTrue(saveStub.calledOnce)
+    })
+
+    test('rejects a changed attachment url during update validation', async ({
         assert,
         application,
         models,
@@ -1435,13 +1519,57 @@ test.group('Resource | validateParams', (group) => {
         }
 
         const resource = application.container.make(BaseResource, [User])
+        const existingUser = new User()
+        existingUser.attachment = 'https://example.com/existing-file.pdf'
         const params = {
             username: 'hello-world',
             password: 'Hi!',
-            attachment: 'https://example.com/existing-file.pdf',
+            attachment: 'https://example.com/changed-file.pdf',
+        }
+        sinon.stub(User, 'findOrFail').resolves(existingUser)
+        const saveStub = sinon.stub(User.prototype, 'save')
+
+        await assert.rejects(async () => {
+            await resource.update(1, params)
+        }, /Resource cannot be stored because of validation errors/)
+        assert.isFalse(saveStub.called)
+    })
+
+    test('does not inspect a non-editable attachment during update validation', async ({
+        assert,
+        application,
+        models,
+    }) => {
+        const UserModel = models.User
+        const { column } = application.container.use('Adonis/Lucid/Orm')
+
+        class User extends UserModel {
+            @column()
+            public attachment: string
         }
 
-        const validatedData = await resource.validateParams(params)
+        User.$adminColumnOptions = {
+            attachment: {
+                type: 'file',
+                editable: false,
+                serialize: () => {
+                    throw new Error('non-editable attachment was inspected')
+                },
+            },
+        }
+
+        const resource = application.container.make(BaseResource, [User])
+        const existingUser = new User()
+        existingUser.attachment = 'https://example.com/existing-file.pdf'
+
+        const validatedData = await resource.validateParams(
+            {
+                username: 'hello-world',
+                password: 'Hi!',
+                attachment: 'https://example.com/existing-file.pdf',
+            },
+            existingUser
+        )
 
         assert.isFalse('attachment' in validatedData)
     })
@@ -1467,15 +1595,23 @@ test.group('Resource | validateParams', (group) => {
         }
 
         const resource = application.container.make(BaseResource, [User])
+        const existingUser = new User()
+        existingUser.attachment = 'https://example.com/existing-file.pdf'
         const params = {
             username: 'hello-world',
             password: 'Hi!',
             attachment: '',
         }
+        sinon.stub(User, 'findOrFail').resolves(existingUser)
+        const saveStub = sinon
+            .stub(User.prototype, 'save')
+            .resolves(existingUser)
 
-        const validatedData = await resource.validateParams(params)
+        const updatedData = await resource.update(1, params)
 
-        assert.isNull(validatedData.attachment)
+        assert.isNull(updatedData.attachment)
+        assert.isNull(existingUser.attachment)
+        assert.isTrue(saveStub.calledOnce)
     })
 
     test('throws when a required attachment is cleared with empty string', async ({
@@ -1499,19 +1635,71 @@ test.group('Resource | validateParams', (group) => {
         }
 
         const resource = application.container.make(BaseResource, [User])
+        const existingUser = new User()
+        existingUser.attachment = 'https://example.com/existing-file.pdf'
         const params = {
             username: 'hello-world',
             password: 'Hi!',
             attachment: '',
         }
+        sinon.stub(User, 'findOrFail').resolves(existingUser)
+        const saveStub = sinon.stub(User.prototype, 'save')
 
-        try {
-            await resource.validateParams(params)
+        await assert.rejects(async () => {
+            await resource.update(1, params)
+        }, /Resource cannot be stored because of validation errors/)
+        assert.strictEqual(
+            existingUser.attachment,
+            'https://example.com/existing-file.pdf'
+        )
+        assert.isFalse(saveStub.called)
+    })
 
-            throw new Error(`resource.validateParams didn't throw exception!`)
-        } catch (e) {
-            assert.instanceOf(e, ValidationError)
+    test('accepts an uploaded attachment object for normal file validation', async ({
+        assert,
+        application,
+        models,
+    }) => {
+        const UserModel = models.User
+        const { column } = application.container.use('Adonis/Lucid/Orm')
+
+        class User extends UserModel {
+            @column()
+            public attachment: any
         }
+
+        User.$adminColumnOptions = {
+            attachment: {
+                type: 'file',
+                optional: false,
+            },
+        }
+
+        const resource = application.container.make(BaseResource, [User])
+        const validateUpload = sinon.spy()
+        const upload = {
+            isMultipartFile: true,
+            sizeLimit: undefined,
+            allowedExtensions: undefined,
+            errors: [],
+            validate: validateUpload,
+            url: 'https://example.com/uploaded-file.pdf',
+        }
+        const params = {
+            username: 'hello-world',
+            password: 'Hi!',
+            attachment: upload,
+        }
+        const saveStub = sinon.stub(User.prototype, 'save')
+
+        const createdData = await resource.create(params)
+
+        assert.strictEqual(
+            createdData.attachment,
+            'https://example.com/uploaded-file.pdf'
+        )
+        assert.isTrue(validateUpload.calledOnce)
+        assert.isTrue(saveStub.calledOnce)
     })
 })
 
@@ -1547,7 +1735,7 @@ test.group('Resource | create', (group) => {
         const data = await resource.create(params)
 
         assert.deepEqual(data, sanitizedData)
-        assert.isTrue(validateParamsStub.calledOnceWith(params))
+        assert.isTrue(validateParamsStub.calledOnceWithExactly(params))
         assert.isTrue(saveStub.calledOnce)
         assert.isTrue(sanitizeStub.calledOnce)
     })
@@ -1592,7 +1780,7 @@ test.group('Resource | update', (group) => {
         assert.deepEqual(data, sanitizedData)
         assert.deepEqual(user.$attributes, params)
         assert.isTrue(findOrFailStub.calledOnceWith(1))
-        assert.isTrue(validateParamsStub.calledOnceWith(params))
+        assert.isTrue(validateParamsStub.calledOnceWithExactly(params, user))
         assert.isTrue(saveStub.calledOnce)
         assert.isTrue(sanitizeStub.calledOnceWith(user))
     })

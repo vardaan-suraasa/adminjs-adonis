@@ -2,6 +2,7 @@ declare module '@ioc:Adonis/Addons/AdminJS' {
     import { BaseProperty, BaseResource, Filter, ParamsType } from 'adminjs'
     import type {
         LucidModel,
+        LucidRow,
         ModelQueryBuilderContract,
     } from '@ioc:Adonis/Lucid/Orm'
 
@@ -84,10 +85,12 @@ declare module '@ioc:Adonis/Addons/AdminJS' {
         /**
          * Helper to validate params passed during creation / updation.
          *
-         * TODO: add support for files
          * TODO: add support for JSON
          */
-        public validateParams(params: ParamsType): Promise<Record<string, any>>
+        public validateParams(
+            params: ParamsType,
+            existingRecord?: LucidRow
+        ): Promise<Record<string, any>>
 
         /**
          * Create a new object in database and return its parameters

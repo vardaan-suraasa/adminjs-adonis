@@ -10,7 +10,7 @@
 ### Fixes
 
 * Enum filter values are converted via `getEnumValue` before query application; invalid enum filter input is skipped (no 500)
-* Attachment fields: existing URL strings and cleared optional attachments are handled in `validateParams`; clearing a **required** attachment fails validation instead of writing `null`
+* Attachment fields: only an update value matching the existing serialized attachment is preserved; arbitrary URL strings on create or update now fail file validation, optional clears write `null`, and required clears fail validation
 * `belongsTo` reference resolved only when exactly one relation matches the FK
 * Current admin user resolved from the authenticated/default guard selected by Adonis auth middleware
 * Inherited virtual filters and decorated actions execute against the concrete registered model; duplicate inherited metadata is rejected without mutating the parent
@@ -117,5 +117,4 @@
 * fix: consider auto create when computing optional ([85b0cd1](https://github.com/chirgjin/adminjs-adonis/commit/85b0cd1))
 * chore: install sinon ([00e5fae](https://github.com/chirgjin/adminjs-adonis/commit/00e5fae))
 * Initial commit ([89a7c81](https://github.com/chirgjin/adminjs-adonis/commit/89a7c81))
-
 
