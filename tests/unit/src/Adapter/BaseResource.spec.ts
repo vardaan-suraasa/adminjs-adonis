@@ -429,6 +429,44 @@ test.group('Resource | applyFilter', (group) => {
         assert.deepEqual(bindings, ['%a\\%b\\_c\\\\d%', '\\'])
         assert.lengthOf(bindings[1] as string, 1)
     })
+
+    test('uses the mapped database column for string identifier filters', async ({
+        assert,
+        application,
+        models,
+    }) => {
+        const { Property } = propertyImport
+        const UserModel = models.User
+        const { column } = application.container.use('Adonis/Lucid/Orm')
+
+        class User extends UserModel {
+            @column({ columnName: 'username' })
+            public displayName: string
+        }
+
+        class FakeProperty extends Property {
+            public type() {
+                return 'string'
+            }
+
+            public isId(): boolean {
+                return this.columnKey === 'displayName'
+            }
+        }
+
+        sinon.replace(propertyImport, 'Property', FakeProperty)
+        const resource = application.container.make(BaseResource, [User])
+        const query = User.query()
+        const filter = new Filter({ displayName: 'mapped%value' }, resource)
+
+        await resource.applyFilter(query, filter)
+
+        const { sql, bindings } = query.toSQL()
+
+        assert.include(sql, '`username` LIKE ? ESCAPE ?')
+        assert.notInclude(sql, '`displayName`')
+        assert.deepEqual(bindings, ['%mapped\\%value%', '\\'])
+    })
 })
 
 test.group(
@@ -704,6 +742,55 @@ test.group('Resource | applyFilter | generic search', (group) => {
             }
         } finally {
             await User.query().whereIn('username', usernames).delete()
+        }
+    })
+
+    test('searches a mapped attribute through its database column in SQLite', async ({
+        assert,
+        application,
+        models,
+    }) => {
+        const UserModel = models.User
+        const { column } = application.container.use('Adonis/Lucid/Orm')
+        const displayName = `mapped-search-${Date.now()}-${Math.random()
+            .toString(16)
+            .slice(2)}`
+
+        class User extends UserModel {
+            @column({ columnName: 'username' })
+            public displayName: string
+        }
+
+        User.$adminColumnOptions = {
+            displayName: { searchable: true },
+        }
+
+        const user = await User.create({
+            displayName,
+            password: 'verysecurehashedpassword',
+        })
+
+        try {
+            const resource = application.container.make(BaseResource, [User])
+            const query = User.query()
+            const filter = new Filter(
+                { [SEARCH_PROPERTY_PATH]: displayName },
+                resource
+            )
+
+            await resource.applyFilter(query, filter)
+
+            const { sql } = query.toSQL()
+            const matches = await query
+
+            assert.include(sql, '`username` LIKE ? ESCAPE ?')
+            assert.notInclude(sql, '`displayName`')
+            assert.deepEqual(
+                matches.map(({ id }) => id),
+                [user.id]
+            )
+        } finally {
+            await User.query().where('id', user.id).delete()
         }
     })
 

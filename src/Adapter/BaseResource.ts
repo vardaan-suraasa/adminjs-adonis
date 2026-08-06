@@ -224,7 +224,10 @@ export class BaseResource extends BaseAdminResource {
                         continue
                     }
                 } else if (property.isId() && property.type() === 'string') {
-                    whereLikeLiteral(query, key, filterElement.value)
+                    const columnName =
+                        this.model.$getColumn(key)?.columnName ?? key
+
+                    whereLikeLiteral(query, columnName, filterElement.value)
                 } else {
                     query.where(key, filterElement.value)
                 }
@@ -259,10 +262,13 @@ export class BaseResource extends BaseAdminResource {
 
         for (const column of this.model.$columnsDefinitions.keys()) {
             if (getAdminColumnOptions(this.model, column).searchable) {
+                const columnName =
+                    this.model.$getColumn(column)?.columnName ?? column
+
                 // OR composition happens on the outer group; each clause is a
                 // plain literal LIKE (not a nested `orWhere`).
                 wheres.push((builder) =>
-                    whereLikeLiteral(builder, column, value)
+                    whereLikeLiteral(builder, columnName, value)
                 )
             }
         }
