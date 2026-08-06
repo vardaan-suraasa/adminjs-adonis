@@ -312,7 +312,7 @@ test.group('Resource | applyFilter', (group) => {
         await resource.applyFilter(query, filter)
 
         assert.isTrue(whereStub.calledOnce)
-        assert.isTrue(whereStub.calledWith('type', UserType.ADMIN))
+        assert.isTrue(whereStub.calledWith('type', sinon.match(UserType.ADMIN)))
     })
 
     test('skips the filter instead of throwing when the enum value is malformed', async ({
