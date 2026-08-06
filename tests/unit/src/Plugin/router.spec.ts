@@ -24,6 +24,20 @@ test.group('Router | createRouteHandler', (group) => {
         action: 'test',
     }
     let admin: AdminJS
+    let receivedCurrentAdmin: unknown
+
+    class ControllerWithCapture {
+        public admin: AdminJS
+
+        constructor(_ctorArgs: { admin: AdminJS }, currentAdmin: unknown) {
+            this.admin = _ctorArgs.admin
+            receivedCurrentAdmin = currentAdmin
+        }
+
+        public test() {
+            return 'Sample HTML Text'
+        }
+    }
 
     group.each.setup(() => {
         ctx = group.application.container.use('Adonis/Core/HttpContext').create(
@@ -34,6 +48,7 @@ test.group('Router | createRouteHandler', (group) => {
             })
         )
         admin = new AdminJS()
+        receivedCurrentAdmin = undefined
     })
 
     group.each.teardown(() => {
@@ -81,7 +96,7 @@ test.group('Router | createRouteHandler', (group) => {
             use: (guard: string) => {
                 assert.strictEqual(guard, 'sso')
 
-                return { user: ssoUser }
+                return { user: ssoUser, isAuthenticated: true }
             },
         }
 
@@ -93,21 +108,6 @@ test.group('Router | createRouteHandler', (group) => {
             },
         ])
 
-        let receivedCurrentAdmin: unknown
-
-        class ControllerWithCapture {
-            public admin: AdminJS
-
-            constructor(_ctorArgs: { admin: AdminJS }, currentAdmin: unknown) {
-                this.admin = _ctorArgs.admin
-                receivedCurrentAdmin = currentAdmin
-            }
-
-            public test() {
-                return 'Sample HTML Text'
-            }
-        }
-
         const handler = router.createRouteHandler({
             ...route,
             Controller: ControllerWithCapture,
@@ -118,19 +118,23 @@ test.group('Router | createRouteHandler', (group) => {
         assert.strictEqual(receivedCurrentAdmin, ssoUser)
     })
 
-    test('uses the first guard when auth middleware lists multiple guards', async ({
+    test('uses the first authenticated guard when auth middleware lists multiple guards', async ({
         assert,
         application,
     }) => {
         const webUser = { uuid: 'web-user' }
+        const apiUser = { uuid: 'api-user' }
         const defaultUser = { uuid: 'default-user' }
+        const guardLookups: string[] = []
 
         ;(ctx as any).auth = {
             user: defaultUser,
             use: (guard: string) => {
-                assert.strictEqual(guard, 'web')
+                guardLookups.push(guard)
 
-                return { user: webUser }
+                return guard === 'web'
+                    ? { user: webUser, isAuthenticated: false }
+                    : { user: apiUser, isAuthenticated: true }
             },
         }
 
@@ -138,24 +142,9 @@ test.group('Router | createRouteHandler', (group) => {
             admin,
             {
                 enabled: true,
-                middlewares: ['auth:web,api'],
+                middlewares: ['shield', 'auth: web, , api ', 'auth:sso'],
             },
         ])
-
-        let receivedCurrentAdmin: unknown
-
-        class ControllerWithCapture {
-            public admin: AdminJS
-
-            constructor(_ctorArgs: { admin: AdminJS }, currentAdmin: unknown) {
-                this.admin = _ctorArgs.admin
-                receivedCurrentAdmin = currentAdmin
-            }
-
-            public test() {
-                return 'Sample HTML Text'
-            }
-        }
 
         const handler = router.createRouteHandler({
             ...route,
@@ -164,10 +153,11 @@ test.group('Router | createRouteHandler', (group) => {
 
         await handler(ctx)
 
-        assert.strictEqual(receivedCurrentAdmin, webUser)
+        assert.strictEqual(receivedCurrentAdmin, apiUser)
+        assert.deepEqual(guardLookups, ['web', 'api'])
     })
 
-    test('falls back to the default guard when no auth:<guard> middleware is configured', async ({
+    test('uses the default auth user when bare auth middleware is configured', async ({
         assert,
         application,
     }) => {
@@ -179,23 +169,9 @@ test.group('Router | createRouteHandler', (group) => {
             admin,
             {
                 enabled: true,
+                middlewares: ['auth'],
             },
         ])
-
-        let receivedCurrentAdmin: unknown
-
-        class ControllerWithCapture {
-            public admin: AdminJS
-
-            constructor(_ctorArgs: { admin: AdminJS }, currentAdmin: unknown) {
-                this.admin = _ctorArgs.admin
-                receivedCurrentAdmin = currentAdmin
-            }
-
-            public test() {
-                return 'Sample HTML Text'
-            }
-        }
 
         const handler = router.createRouteHandler({
             ...route,
@@ -205,6 +181,92 @@ test.group('Router | createRouteHandler', (group) => {
         await handler(ctx)
 
         assert.strictEqual(receivedCurrentAdmin, defaultUser)
+    })
+
+    test('uses the default auth user when no auth middleware is configured', async ({
+        assert,
+        application,
+    }) => {
+        const defaultUser = { uuid: 'default-user' }
+
+        ;(ctx as any).auth = { user: defaultUser }
+
+        const router = application.container.make(Router, [
+            admin,
+            {
+                enabled: true,
+                middlewares: ['shield'],
+            },
+        ])
+
+        const handler = router.createRouteHandler({
+            ...route,
+            Controller: ControllerWithCapture,
+        })
+
+        await handler(ctx)
+
+        assert.strictEqual(receivedCurrentAdmin, defaultUser)
+    })
+
+    test('passes undefined when the auth context is absent', async ({
+        assert,
+        application,
+    }) => {
+        const router = application.container.make(Router, [
+            admin,
+            {
+                enabled: true,
+                middlewares: ['auth:sso'],
+            },
+        ])
+
+        const handler = router.createRouteHandler({
+            ...route,
+            Controller: ControllerWithCapture,
+        })
+
+        await handler(ctx)
+
+        assert.isUndefined(receivedCurrentAdmin)
+    })
+
+    test('passes undefined when none of the configured guards is authenticated', async ({
+        assert,
+        application,
+    }) => {
+        const webUser = { uuid: 'web-user' }
+        const apiUser = { uuid: 'api-user' }
+        const guardLookups: string[] = []
+
+        ;(ctx as any).auth = {
+            user: { uuid: 'default-user' },
+            use: (guard: string) => {
+                guardLookups.push(guard)
+
+                return guard === 'web'
+                    ? { user: webUser, isAuthenticated: false }
+                    : { user: apiUser, isAuthenticated: false }
+            },
+        }
+
+        const router = application.container.make(Router, [
+            admin,
+            {
+                enabled: true,
+                middlewares: ['auth:web,api'],
+            },
+        ])
+
+        const handler = router.createRouteHandler({
+            ...route,
+            Controller: ControllerWithCapture,
+        })
+
+        await handler(ctx)
+
+        assert.isUndefined(receivedCurrentAdmin)
+        assert.deepEqual(guardLookups, ['web', 'api'])
     })
 })
 
